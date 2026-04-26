@@ -1,4 +1,4 @@
-name = "ai-health-match-backend"
+name = "ai-health-backend"
 main = "src/index.ts"
 compatibility_date = "2024-07-25"
 
