@@ -2,6 +2,10 @@ name = "ai-health-backend"
 main = "src/index.ts"
 compatibility_date = "2024-07-25"
 
+routes = [
+  { pattern = "api.healthmatchai.com", custom_domain = true }
+]
+
 [vars]
 GEMINI_MODEL = "gemini-2.5-flash-lite"
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com"
