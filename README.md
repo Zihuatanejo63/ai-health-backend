@@ -41,15 +41,31 @@ The Worker stores each successful AI triage request and checkout-created order r
   - `migrations/0003_users_orders_doctor_requests.sql`
   - `migrations/0004_provider_neutral_orders.sql`
   - `migrations/0005_rate_limits_api_logs.sql`
+  - `migrations/0006_platform_ledger.sql`
 
 For privacy minimization, the Worker no longer stores full symptom text in D1. It stores the case reference, severity, duration, selected output language, AI summary, suggested departments, next steps, and a redacted symptom-length marker.
+
+Orders use a platform-collected bookkeeping model:
+
+- Gross consultation request amount is collected by AI Health Match.
+- Platform service fee is recorded at 30%.
+- Doctor manual payout is recorded at 70%.
+- `payout_status` starts as `pending` and can be marked `paid` after manual settlement.
 
 ## API
 
 - `POST /api/analyze-symptoms`
 - `POST /api/create-checkout-session`
+- `GET /api/admin/ledger`
+- `POST /api/admin/mark-payout`
 
 The API applies basic per-client rate limits and records minimal operational logs in D1 using hashed client identifiers.
+
+Admin ledger endpoints require:
+
+```bash
+Authorization: Bearer $ADMIN_API_TOKEN
+```
 
 ## Payments
 

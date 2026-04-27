@@ -32,6 +32,20 @@ type CheckoutRequest = {
 type CheckoutResponse = {
   checkoutUrl: string;
   sessionId: string;
+  accounting: AccountingSplit;
+};
+
+type AccountingSplit = {
+  grossAmountUsd: number;
+  platformFeeRateBps: number;
+  platformFeeUsd: number;
+  doctorPayoutUsd: number;
+};
+
+type MarkPayoutRequest = {
+  orderId: number;
+  payoutMethod?: string;
+  payoutReference?: string;
 };
 
 interface Env {
@@ -41,6 +55,7 @@ interface Env {
   FRONTEND_BASE_URL?: string;
   PAYMENT_CHECKOUT_URL?: string;
   PAYMENT_PROVIDER?: string;
+  ADMIN_API_TOKEN?: string;
   DB?: D1Database;
 }
 
@@ -51,6 +66,7 @@ const DISCLAIMER =
 const RATE_LIMIT_WINDOW_SECONDS = 60;
 const ANALYZE_RATE_LIMIT = 12;
 const CHECKOUT_RATE_LIMIT = 20;
+const PLATFORM_FEE_RATE_BPS = 3000;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -67,6 +83,16 @@ export default {
     if (url.pathname === "/api/create-checkout-session") {
       return withApiLog(request, env, "create_checkout_session", () =>
         handleCreateCheckoutSession(request, env)
+      );
+    }
+
+    if (url.pathname === "/api/admin/ledger") {
+      return withApiLog(request, env, "admin_ledger", () => handleAdminLedger(request, env));
+    }
+
+    if (url.pathname === "/api/admin/mark-payout") {
+      return withApiLog(request, env, "admin_mark_payout", () =>
+        handleAdminMarkPayout(request, env)
       );
     }
 
@@ -282,6 +308,192 @@ async function handleCreateCheckoutSession(request: Request, env: Env): Promise<
   }
 }
 
+async function handleAdminLedger(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "GET") {
+    return json(
+      {
+        error: {
+          code: "method_not_allowed",
+          message: "Use GET for this endpoint."
+        }
+      },
+      405,
+      request,
+      env
+    );
+  }
+
+  const auth = authenticateAdmin(request, env);
+  if (!auth.valid) return json({ error: auth.error }, auth.status, request, env);
+  if (!env.DB) {
+    return json({ error: { code: "db_unavailable", message: "D1 is not configured." } }, 500, request, env);
+  }
+
+  const url = new URL(request.url);
+  const payoutStatus = url.searchParams.get("payoutStatus");
+  const allowedStatuses = new Set(["pending", "paid", "cancelled"]);
+  const filter = payoutStatus && allowedStatuses.has(payoutStatus) ? payoutStatus : null;
+
+  const orders = filter
+    ? await env.DB.prepare(
+        `SELECT
+          orders.id,
+          orders.case_reference_id,
+          doctor_requests.doctor_id,
+          doctor_requests.patient_email,
+          doctor_requests.note,
+          orders.payment_provider,
+          orders.provider_checkout_id,
+          orders.gross_amount_usd,
+          orders.platform_fee_rate_bps,
+          orders.platform_fee_usd,
+          orders.doctor_payout_usd,
+          orders.status,
+          orders.service_status,
+          orders.payout_status,
+          orders.payout_method,
+          orders.payout_reference,
+          orders.paid_out_at,
+          orders.created_at
+        FROM orders
+        LEFT JOIN doctor_requests ON doctor_requests.id = orders.doctor_request_id
+        WHERE orders.payout_status = ?
+        ORDER BY orders.id DESC
+        LIMIT 100`
+      )
+        .bind(filter)
+        .all()
+    : await env.DB.prepare(
+        `SELECT
+          orders.id,
+          orders.case_reference_id,
+          doctor_requests.doctor_id,
+          doctor_requests.patient_email,
+          doctor_requests.note,
+          orders.payment_provider,
+          orders.provider_checkout_id,
+          orders.gross_amount_usd,
+          orders.platform_fee_rate_bps,
+          orders.platform_fee_usd,
+          orders.doctor_payout_usd,
+          orders.status,
+          orders.service_status,
+          orders.payout_status,
+          orders.payout_method,
+          orders.payout_reference,
+          orders.paid_out_at,
+          orders.created_at
+        FROM orders
+        LEFT JOIN doctor_requests ON doctor_requests.id = orders.doctor_request_id
+        ORDER BY orders.id DESC
+        LIMIT 100`
+      ).all();
+
+  const totals = await env.DB.prepare(
+    `SELECT
+      COALESCE(SUM(gross_amount_usd), 0) AS gross_amount_usd,
+      COALESCE(SUM(platform_fee_usd), 0) AS platform_fee_usd,
+      COALESCE(SUM(doctor_payout_usd), 0) AS doctor_payout_usd,
+      COALESCE(SUM(CASE WHEN payout_status = 'pending' THEN doctor_payout_usd ELSE 0 END), 0) AS pending_doctor_payout_usd,
+      COALESCE(SUM(CASE WHEN payout_status = 'paid' THEN doctor_payout_usd ELSE 0 END), 0) AS paid_doctor_payout_usd
+    FROM orders`
+  ).first();
+
+  return json(
+    {
+      totals,
+      orders: orders.results
+    },
+    200,
+    request,
+    env
+  );
+}
+
+async function handleAdminMarkPayout(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") {
+    return json(
+      {
+        error: {
+          code: "method_not_allowed",
+          message: "Use POST for this endpoint."
+        }
+      },
+      405,
+      request,
+      env
+    );
+  }
+
+  const auth = authenticateAdmin(request, env);
+  if (!auth.valid) return json({ error: auth.error }, auth.status, request, env);
+  if (!env.DB) {
+    return json({ error: { code: "db_unavailable", message: "D1 is not configured." } }, 500, request, env);
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return json(
+      { error: { code: "invalid_json", message: "Request body must be valid JSON." } },
+      400,
+      request,
+      env
+    );
+  }
+
+  const validation = validateMarkPayoutRequest(body);
+  if (!validation.valid) {
+    return json(
+      { error: { code: "invalid_input", message: validation.message } },
+      400,
+      request,
+      env
+    );
+  }
+
+  const result = await env.DB.prepare(
+    `UPDATE orders
+    SET payout_status = 'paid',
+        payout_method = ?,
+        payout_reference = ?,
+        paid_out_at = CURRENT_TIMESTAMP,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?`
+  )
+    .bind(
+      validation.data.payoutMethod ?? "manual",
+      validation.data.payoutReference ?? null,
+      validation.data.orderId
+    )
+    .run();
+
+  if (result.meta.changes === 0) {
+    return json(
+      { error: { code: "not_found", message: "Order not found." } },
+      404,
+      request,
+      env
+    );
+  }
+
+  await env.DB.prepare(
+    "INSERT INTO ledger_events (order_id, event_type, metadata) VALUES (?, ?, ?)"
+  )
+    .bind(
+      validation.data.orderId,
+      "doctor_payout_marked_paid",
+      JSON.stringify({
+        payoutMethod: validation.data.payoutMethod ?? "manual",
+        payoutReference: validation.data.payoutReference ?? null
+      })
+    )
+    .run();
+
+  return json({ ok: true }, 200, request, env);
+}
+
 function validateCheckoutRequest(input: unknown):
   | { valid: true; data: CheckoutRequest }
   | { valid: false; message: string } {
@@ -327,6 +539,38 @@ function validateCheckoutRequest(input: unknown):
   };
 }
 
+function validateMarkPayoutRequest(input: unknown):
+  | { valid: true; data: MarkPayoutRequest }
+  | { valid: false; message: string } {
+  if (typeof input !== "object" || input === null) {
+    return { valid: false, message: "Request body must be an object." };
+  }
+
+  const data = input as Partial<MarkPayoutRequest>;
+  if (
+    typeof data.orderId !== "number" ||
+    !Number.isInteger(data.orderId) ||
+    data.orderId <= 0
+  ) {
+    return { valid: false, message: "orderId must be a positive integer." };
+  }
+
+  return {
+    valid: true,
+    data: {
+      orderId: data.orderId,
+      payoutMethod:
+        typeof data.payoutMethod === "string" && data.payoutMethod.trim().length > 0
+          ? data.payoutMethod.trim().slice(0, 80)
+          : undefined,
+      payoutReference:
+        typeof data.payoutReference === "string" && data.payoutReference.trim().length > 0
+          ? data.payoutReference.trim().slice(0, 160)
+          : undefined
+    }
+  };
+}
+
 function createMerchantCheckoutLink(
   input: CheckoutRequest,
   env: Env
@@ -345,7 +589,18 @@ function createMerchantCheckoutLink(
 
   return {
     checkoutUrl: checkoutUrl.toString(),
-    sessionId: `mor_${crypto.randomUUID()}`
+    sessionId: `mor_${crypto.randomUUID()}`,
+    accounting: calculateAccountingSplit(input.amountUsd)
+  };
+}
+
+function calculateAccountingSplit(grossAmountUsd: number): AccountingSplit {
+  const platformFeeUsd = Math.round((grossAmountUsd * PLATFORM_FEE_RATE_BPS) / 10000);
+  return {
+    grossAmountUsd,
+    platformFeeRateBps: PLATFORM_FEE_RATE_BPS,
+    platformFeeUsd,
+    doctorPayoutUsd: grossAmountUsd - platformFeeUsd
   };
 }
 
@@ -383,8 +638,14 @@ async function saveCheckoutOrder(
       provider_checkout_id,
       provider_checkout_url,
       amount_usd,
+      gross_amount_usd,
+      platform_fee_rate_bps,
+      platform_fee_usd,
+      doctor_payout_usd,
+      payout_status,
+      service_status,
       status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       input.caseReferenceId ?? null,
@@ -393,9 +654,32 @@ async function saveCheckoutOrder(
       checkout.sessionId,
       checkout.checkoutUrl,
       input.amountUsd,
+      checkout.accounting.grossAmountUsd,
+      checkout.accounting.platformFeeRateBps,
+      checkout.accounting.platformFeeUsd,
+      checkout.accounting.doctorPayoutUsd,
+      "pending",
+      "pending_confirmation",
       "checkout_link_created"
     )
-    .run();
+    .run()
+    .then(async (result) => {
+      if (!env.DB) return;
+      await env.DB.prepare(
+        "INSERT INTO ledger_events (order_id, event_type, amount_usd, metadata) VALUES (?, ?, ?, ?)"
+      )
+        .bind(
+          result.meta.last_row_id,
+          "checkout_link_created",
+          checkout.accounting.grossAmountUsd,
+          JSON.stringify({
+            platformFeeUsd: checkout.accounting.platformFeeUsd,
+            doctorPayoutUsd: checkout.accounting.doctorPayoutUsd,
+            platformFeeRateBps: checkout.accounting.platformFeeRateBps
+          })
+        )
+        .run();
+    });
 }
 
 function validateRequest(input: unknown):
@@ -732,6 +1016,35 @@ async function hashClient(request: Request): Promise<string> {
     .slice(0, 16)
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
+}
+
+function authenticateAdmin(request: Request, env: Env):
+  | { valid: true }
+  | { valid: false; status: number; error: { code: string; message: string } } {
+  if (!env.ADMIN_API_TOKEN) {
+    return {
+      valid: false,
+      status: 500,
+      error: {
+        code: "config_error",
+        message: "ADMIN_API_TOKEN is not configured."
+      }
+    };
+  }
+
+  const expected = `Bearer ${env.ADMIN_API_TOKEN}`;
+  if (request.headers.get("Authorization") !== expected) {
+    return {
+      valid: false,
+      status: 401,
+      error: {
+        code: "unauthorized",
+        message: "Missing or invalid admin token."
+      }
+    };
+  }
+
+  return { valid: true };
 }
 
 function corsHeaders(request: Request, env: Env): Record<string, string> {
