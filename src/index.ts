@@ -24,6 +24,7 @@ interface Env {
   GEMINI_API_KEY: string;
   GEMINI_MODEL?: string;
   GEMINI_BASE_URL?: string;
+  DB?: D1Database;
 }
 
 const DISCLAIMER =
@@ -110,6 +111,7 @@ export default {
 
     try {
       const aiResult = await callGemini(validation.data, env);
+      await saveCase(validation.data, aiResult, env);
       return json(aiResult, 200);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Gemini request failed.";
@@ -304,6 +306,40 @@ async function callGemini(input: AnalyzeSymptomsRequest, env: Env): Promise<Anal
     disclaimer: DISCLAIMER,
     referenceId: generateReferenceId()
   };
+}
+
+async function saveCase(
+  input: AnalyzeSymptomsRequest,
+  result: AnalyzeSymptomsResponse,
+  env: Env
+): Promise<void> {
+  if (!env.DB) return;
+
+  await env.DB.prepare(
+    `INSERT INTO cases (
+      reference_id,
+      symptoms,
+      severity,
+      duration_value,
+      duration_unit,
+      risk_level,
+      summary,
+      recommended_departments,
+      next_steps
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  )
+    .bind(
+      result.referenceId,
+      input.symptoms,
+      input.severity,
+      input.durationValue,
+      input.durationUnit,
+      result.riskLevel,
+      result.summary,
+      JSON.stringify(result.recommendedDepartments),
+      JSON.stringify(result.nextSteps)
+    )
+    .run();
 }
 
 function extractJson(raw: string): string {

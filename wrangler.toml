@@ -6,5 +6,10 @@ compatibility_date = "2024-07-25"
 GEMINI_MODEL = "gemini-2.5-flash-lite"
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com"
 
+[[d1_databases]]
+binding = "DB"
+database_name = "ai_health_match"
+database_id = "af3d7ff3-399b-434c-81ed-fb3f1e8af5da"
+
 # Set GEMINI_API_KEY with:
 # wrangler secret put GEMINI_API_KEY
