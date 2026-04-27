@@ -24,4 +24,7 @@ The Worker stores each successful AI triage request in Cloudflare D1.
 
 - Binding: `DB`
 - Database: `ai_health_match`
-- Migration: `migrations/0001_cases.sql`
+- Migrations:
+  - `migrations/0001_cases.sql`
+  - `migrations/0002_case_output_language.sql`
+  - `migrations/0003_users_orders_doctor_requests.sql`
