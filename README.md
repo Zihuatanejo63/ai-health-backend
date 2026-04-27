@@ -42,6 +42,7 @@ The Worker stores each successful AI triage request and checkout-created order r
   - `migrations/0004_provider_neutral_orders.sql`
   - `migrations/0005_rate_limits_api_logs.sql`
   - `migrations/0006_platform_ledger.sql`
+  - `migrations/0007_doctors_verifications.sql`
 
 For privacy minimization, the Worker no longer stores full symptom text in D1. It stores the case reference, severity, duration, selected output language, AI summary, suggested departments, next steps, and a redacted symptom-length marker.
 
@@ -51,6 +52,13 @@ Orders use a platform-collected bookkeeping model:
 - Platform service fee is recorded at 30%.
 - Doctor manual payout is recorded at 70%.
 - `payout_status` starts as `pending` and can be marked `paid` after manual settlement.
+
+Provider onboarding uses a manual verification-first model:
+
+- `doctors` stores provider profile, license region/number, public registry URL, profile status, and verification status.
+- `doctor_verifications` stores each manual check such as official registry lookup, institution email check, video call, identity review, or sanctions review.
+- Seeded MVP doctors are marked `pending` and `hidden` until license and identity checks are completed.
+- Do not rely on uploaded certificate images alone; verify against official registries and independent public sources.
 
 ## API
 

@@ -615,14 +615,16 @@ async function saveCheckoutOrder(
     `INSERT INTO doctor_requests (
       case_reference_id,
       doctor_id,
+      doctor_record_id,
       patient_email,
       status,
       note
-    ) VALUES (?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?)
     RETURNING id`
   )
     .bind(
       input.caseReferenceId ?? null,
+      input.doctorId,
       input.doctorId,
       input.patientEmail ?? null,
       "checkout_link_created",
@@ -634,6 +636,7 @@ async function saveCheckoutOrder(
     `INSERT INTO orders (
       case_reference_id,
       doctor_request_id,
+      doctor_record_id,
       payment_provider,
       provider_checkout_id,
       provider_checkout_url,
@@ -645,11 +648,12 @@ async function saveCheckoutOrder(
       payout_status,
       service_status,
       status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       input.caseReferenceId ?? null,
       doctorRequest?.id ?? null,
+      input.doctorId,
       env.PAYMENT_PROVIDER ?? "merchant_of_record",
       checkout.sessionId,
       checkout.checkoutUrl,
