@@ -13,6 +13,6 @@ npm run dev
 
 ```bash
 npx wrangler login
-npx wrangler secret put DEEPSEEK_API_KEY
+npx wrangler secret put GEMINI_API_KEY
 npm run deploy
 ```

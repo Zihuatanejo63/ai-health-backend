@@ -1,10 +1,10 @@
-name = "ai-health-match-backend"
+name = "ai-health-backend"
 main = "src/index.ts"
 compatibility_date = "2024-07-25"
 
 [vars]
-DEEPSEEK_MODEL = "deepseek-chat"
-DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+GEMINI_MODEL = "gemini-2.5-flash-lite"
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com"
 
-# Set DEEPSEEK_API_KEY with:
-# wrangler secret put DEEPSEEK_API_KEY
+# Set GEMINI_API_KEY with:
+# wrangler secret put GEMINI_API_KEY

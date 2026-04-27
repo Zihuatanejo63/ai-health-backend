@@ -7,6 +7,8 @@ type AnalyzeSymptomsRequest = {
   severity: Severity;
   durationValue: number;
   durationUnit: DurationUnit;
+  imageBase64?: string;
+  imageMimeType?: string;
 };
 
 type AnalyzeSymptomsResponse = {
@@ -19,9 +21,9 @@ type AnalyzeSymptomsResponse = {
 };
 
 interface Env {
-  DEEPSEEK_API_KEY: string;
-  DEEPSEEK_MODEL?: string;
-  DEEPSEEK_BASE_URL?: string;
+  GEMINI_API_KEY: string;
+  GEMINI_MODEL?: string;
+  GEMINI_BASE_URL?: string;
 }
 
 const DISCLAIMER =
@@ -66,12 +68,12 @@ export default {
       );
     }
 
-    if (!env.DEEPSEEK_API_KEY) {
+    if (!env.GEMINI_API_KEY) {
       return json(
         {
           error: {
             code: "config_error",
-            message: "DEEPSEEK_API_KEY is not configured."
+            message: "GEMINI_API_KEY is not configured."
           }
         },
         500
@@ -107,14 +109,14 @@ export default {
     }
 
     try {
-      const aiResult = await callDeepSeek(validation.data, env);
+      const aiResult = await callGemini(validation.data, env);
       return json(aiResult, 200);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "DeepSeek request failed.";
+      const message = error instanceof Error ? error.message : "Gemini request failed.";
       return json(
         {
           error: {
-            code: "deepseek_error",
+            code: "gemini_error",
             message
           }
         },
@@ -161,70 +163,112 @@ function validateRequest(input: unknown):
     };
   }
 
+  const imageFields =
+    typeof data.imageBase64 === "string" && typeof data.imageMimeType === "string"
+      ? {
+          imageBase64: data.imageBase64,
+          imageMimeType: data.imageMimeType
+        }
+      : {};
+
   return {
     valid: true,
     data: {
       symptoms: data.symptoms.trim(),
       severity: data.severity,
       durationValue: data.durationValue,
-      durationUnit: data.durationUnit
+      durationUnit: data.durationUnit,
+      ...imageFields
     }
   };
 }
 
-async function callDeepSeek(input: AnalyzeSymptomsRequest, env: Env): Promise<AnalyzeSymptomsResponse> {
-  const model = env.DEEPSEEK_MODEL ?? "deepseek-chat";
-  const baseUrl = (env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com").replace(/\/$/, "");
+async function callGemini(input: AnalyzeSymptomsRequest, env: Env): Promise<AnalyzeSymptomsResponse> {
+  const model = env.GEMINI_MODEL ?? "gemini-2.5-flash-lite";
+  const baseUrl = (env.GEMINI_BASE_URL ?? "https://generativelanguage.googleapis.com").replace(
+    /\/$/,
+    ""
+  );
 
   const prompt = [
     "You are a medical triage assistant.",
     "You must NOT provide diagnosis, certainty claims, prescriptions, or treatment plans.",
+    "If an image is provided, use it only as visual context and do not diagnose from it.",
     "Return triage support only: risk level, department suggestions, and safe next steps.",
     "Include explicit escalation if high-risk signals are possible.",
     "Keep response concise, practical, and patient-friendly.",
+    "Output JSON with keys: riskLevel, summary, recommendedDepartments, nextSteps.",
+    "riskLevel must be one of low|medium|high.",
+    "Do not wrap JSON in markdown fences.",
     "",
     "Input:",
-    JSON.stringify(input)
+    JSON.stringify({
+      symptoms: input.symptoms,
+      severity: input.severity,
+      durationValue: input.durationValue,
+      durationUnit: input.durationUnit,
+      hasImage: Boolean(input.imageBase64)
+    })
   ].join("\n");
 
-  const response = await fetch(`${baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${env.DEEPSEEK_API_KEY}`
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        {
-          role: "system",
-          content: [
-            "Output JSON with keys: riskLevel, summary, recommendedDepartments, nextSteps. " +
-              "riskLevel must be one of low|medium|high.",
-            "Do not wrap JSON in markdown fences."
-          ].join(" ")
-        },
-        {
-          role: "user",
-          content: prompt
+  const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
+    { text: prompt }
+  ];
+
+  if (input.imageBase64 && input.imageMimeType) {
+    parts.push({
+      inlineData: {
+        mimeType: input.imageMimeType,
+        data: input.imageBase64
+      }
+    });
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 25000);
+
+  const response = await fetch(
+    `${baseUrl}/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${env.GEMINI_API_KEY}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: "user",
+            parts
+          }
+        ],
+        generationConfig: {
+          temperature: 0.2,
+          responseMimeType: "application/json"
         }
-      ],
-      temperature: 0.2
-    })
-  });
+      }),
+      signal: controller.signal
+    }
+  ).finally(() => clearTimeout(timeoutId));
 
   if (!response.ok) {
     const details = await response.text();
-    throw new Error(`DeepSeek API error (${response.status}): ${details.slice(0, 300)}`);
+    throw new Error(`Gemini API error (${response.status}): ${details.slice(0, 300)}`);
   }
 
   const payload = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
+    candidates?: Array<{
+      content?: {
+        parts?: Array<{ text?: string }>;
+      };
+    }>;
   };
 
-  const content = payload.choices?.[0]?.message?.content;
+  const content = payload.candidates?.[0]?.content?.parts
+    ?.map((part) => part.text ?? "")
+    .join("")
+    .trim();
   if (!content) {
-    throw new Error("DeepSeek returned an empty response.");
+    throw new Error("Gemini returned an empty response.");
   }
 
   let parsed: {
@@ -237,7 +281,7 @@ async function callDeepSeek(input: AnalyzeSymptomsRequest, env: Env): Promise<An
   try {
     parsed = JSON.parse(extractJson(content)) as typeof parsed;
   } catch {
-    throw new Error("DeepSeek returned non-JSON content.");
+    throw new Error("Gemini returned non-JSON content.");
   }
 
   const riskLevel = normalizeRiskLevel(parsed.riskLevel);
