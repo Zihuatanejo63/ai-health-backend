@@ -48,26 +48,26 @@ const DISCLAIMER =
   "Medical disclaimer: This output is AI-generated triage support, not a diagnosis. " +
   "Always consult a licensed clinician. If symptoms are severe, worsening, or life-threatening, seek emergency care.";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization"
-};
+const RATE_LIMIT_WINDOW_SECONDS = 60;
+const ANALYZE_RATE_LIMIT = 12;
+const CHECKOUT_RATE_LIMIT = 20;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
     if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: corsHeaders });
+      return new Response(null, { status: 204, headers: corsHeaders(request, env) });
     }
 
     if (url.pathname === "/api/analyze-symptoms") {
-      return handleAnalyzeSymptoms(request, env);
+      return withApiLog(request, env, "analyze_symptoms", () => handleAnalyzeSymptoms(request, env));
     }
 
     if (url.pathname === "/api/create-checkout-session") {
-      return handleCreateCheckoutSession(request, env);
+      return withApiLog(request, env, "create_checkout_session", () =>
+        handleCreateCheckoutSession(request, env)
+      );
     }
 
     return json(
@@ -77,7 +77,9 @@ export default {
           message: "Route not found."
         }
       },
-      404
+      404,
+      request,
+      env
     );
   }
 };
@@ -91,7 +93,24 @@ async function handleAnalyzeSymptoms(request: Request, env: Env): Promise<Respon
           message: "Use POST for this endpoint."
         }
       },
-      405
+      405,
+      request,
+      env
+    );
+  }
+
+  const rateLimit = await enforceRateLimit(request, env, "analyze_symptoms", ANALYZE_RATE_LIMIT);
+  if (!rateLimit.allowed) {
+    return json(
+      {
+        error: {
+          code: "rate_limited",
+          message: "Too many requests. Please wait a minute and try again."
+        }
+      },
+      429,
+      request,
+      env
     );
   }
 
@@ -103,7 +122,9 @@ async function handleAnalyzeSymptoms(request: Request, env: Env): Promise<Respon
           message: "GEMINI_API_KEY is not configured."
         }
       },
-      500
+      500,
+      request,
+      env
     );
   }
 
@@ -118,7 +139,9 @@ async function handleAnalyzeSymptoms(request: Request, env: Env): Promise<Respon
           message: "Request body must be valid JSON."
         }
       },
-      400
+      400,
+      request,
+      env
     );
   }
 
@@ -131,14 +154,16 @@ async function handleAnalyzeSymptoms(request: Request, env: Env): Promise<Respon
           message: validation.message
         }
       },
-      400
+      400,
+      request,
+      env
     );
   }
 
   try {
     const aiResult = await callGemini(validation.data, env);
     await saveCase(validation.data, aiResult, env);
-    return json(aiResult, 200);
+    return json(aiResult, 200, request, env);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Gemini request failed.";
     return json(
@@ -148,7 +173,9 @@ async function handleAnalyzeSymptoms(request: Request, env: Env): Promise<Respon
           message
         }
       },
-      502
+      502,
+      request,
+      env
     );
   }
 }
@@ -162,7 +189,29 @@ async function handleCreateCheckoutSession(request: Request, env: Env): Promise<
           message: "Use POST for this endpoint."
         }
       },
-      405
+      405,
+      request,
+      env
+    );
+  }
+
+  const rateLimit = await enforceRateLimit(
+    request,
+    env,
+    "create_checkout_session",
+    CHECKOUT_RATE_LIMIT
+  );
+  if (!rateLimit.allowed) {
+    return json(
+      {
+        error: {
+          code: "rate_limited",
+          message: "Too many checkout attempts. Please wait a minute and try again."
+        }
+      },
+      429,
+      request,
+      env
     );
   }
 
@@ -175,7 +224,9 @@ async function handleCreateCheckoutSession(request: Request, env: Env): Promise<
             "PAYMENT_CHECKOUT_URL is not configured. Add a Paddle or Lemon Squeezy hosted checkout link."
         }
       },
-      500
+      500,
+      request,
+      env
     );
   }
 
@@ -190,7 +241,9 @@ async function handleCreateCheckoutSession(request: Request, env: Env): Promise<
           message: "Request body must be valid JSON."
         }
       },
-      400
+      400,
+      request,
+      env
     );
   }
 
@@ -203,14 +256,16 @@ async function handleCreateCheckoutSession(request: Request, env: Env): Promise<
           message: validation.message
         }
       },
-      400
+      400,
+      request,
+      env
     );
   }
 
   try {
     const checkout = createMerchantCheckoutLink(validation.data, env);
     await saveCheckoutOrder(validation.data, checkout, env);
-    return json(checkout, 200);
+    return json(checkout, 200, request, env);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Checkout link creation failed.";
     return json(
@@ -220,7 +275,9 @@ async function handleCreateCheckoutSession(request: Request, env: Env): Promise<
           message
         }
       },
-      502
+      502,
+      request,
+      env
     );
   }
 }
@@ -550,7 +607,7 @@ async function saveCase(
   )
     .bind(
       result.referenceId,
-      input.symptoms,
+      createMinimizedSymptomRecord(input.symptoms),
       input.severity,
       input.durationValue,
       input.durationUnit,
@@ -561,6 +618,10 @@ async function saveCase(
       JSON.stringify(result.nextSteps)
     )
     .run();
+}
+
+function createMinimizedSymptomRecord(symptoms: string): string {
+  return `[redacted_symptom_text length=${symptoms.trim().length}]`;
 }
 
 function extractJson(raw: string): string {
@@ -595,12 +656,115 @@ function generateReferenceId(): string {
   return `AHM-${now}-${suffix}`;
 }
 
-function json(data: unknown, status = 200): Response {
+async function withApiLog(
+  request: Request,
+  env: Env,
+  route: string,
+  handler: () => Promise<Response>
+): Promise<Response> {
+  const started = Date.now();
+  const response = await handler();
+  await logApiEvent(request, env, route, response.status, Date.now() - started);
+  return response;
+}
+
+async function enforceRateLimit(
+  request: Request,
+  env: Env,
+  route: string,
+  maxRequests: number
+): Promise<{ allowed: boolean }> {
+  if (!env.DB) return { allowed: true };
+
+  const clientHash = await hashClient(request);
+  const windowStart =
+    Math.floor(Date.now() / 1000 / RATE_LIMIT_WINDOW_SECONDS) * RATE_LIMIT_WINDOW_SECONDS;
+  const key = `${route}:${clientHash}:${windowStart}`;
+
+  const current = await env.DB.prepare("SELECT request_count FROM api_rate_limits WHERE key = ?")
+    .bind(key)
+    .first<{ request_count: number }>();
+
+  if (current && current.request_count >= maxRequests) {
+    return { allowed: false };
+  }
+
+  if (current) {
+    await env.DB.prepare(
+      "UPDATE api_rate_limits SET request_count = request_count + 1, updated_at = CURRENT_TIMESTAMP WHERE key = ?"
+    )
+      .bind(key)
+      .run();
+  } else {
+    await env.DB.prepare(
+      "INSERT INTO api_rate_limits (key, client_hash, route, window_start, request_count) VALUES (?, ?, ?, ?, 1)"
+    )
+      .bind(key, clientHash, route, windowStart)
+      .run();
+  }
+
+  return { allowed: true };
+}
+
+async function logApiEvent(
+  request: Request,
+  env: Env,
+  route: string,
+  status: number,
+  durationMs: number
+): Promise<void> {
+  if (!env.DB) return;
+
+  await env.DB.prepare(
+    "INSERT INTO api_logs (route, method, status, client_hash, duration_ms) VALUES (?, ?, ?, ?, ?)"
+  )
+    .bind(route, request.method, status, await hashClient(request), Math.max(0, durationMs))
+    .run();
+}
+
+async function hashClient(request: Request): Promise<string> {
+  const ip =
+    request.headers.get("CF-Connecting-IP") ??
+    request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() ??
+    "unknown";
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ip));
+  return Array.from(new Uint8Array(digest))
+    .slice(0, 16)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function corsHeaders(request: Request, env: Env): Record<string, string> {
+  const origin = request.headers.get("Origin");
+  const allowedOrigins = new Set([
+    env.FRONTEND_BASE_URL ?? "https://healthmatchai.com",
+    "https://healthmatchai.com",
+    "https://www.healthmatchai.com",
+    "https://ai-health-frontend.pages.dev",
+    "http://localhost:3000"
+  ]);
+
+  return {
+    "Access-Control-Allow-Origin":
+      origin && allowedOrigins.has(origin) ? origin : "https://healthmatchai.com",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    Vary: "Origin"
+  };
+}
+
+function json(data: unknown, status = 200, request?: Request, env?: Env): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
-      ...corsHeaders
+      ...(request && env
+        ? corsHeaders(request, env)
+        : {
+            "Access-Control-Allow-Origin": "https://healthmatchai.com",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization"
+          })
     }
   });
 }

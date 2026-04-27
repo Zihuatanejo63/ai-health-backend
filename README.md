@@ -39,11 +39,17 @@ The Worker stores each successful AI triage request and checkout-created order r
   - `migrations/0001_cases.sql`
   - `migrations/0002_case_output_language.sql`
   - `migrations/0003_users_orders_doctor_requests.sql`
+  - `migrations/0004_provider_neutral_orders.sql`
+  - `migrations/0005_rate_limits_api_logs.sql`
+
+For privacy minimization, the Worker no longer stores full symptom text in D1. It stores the case reference, severity, duration, selected output language, AI summary, suggested departments, next steps, and a redacted symptom-length marker.
 
 ## API
 
 - `POST /api/analyze-symptoms`
 - `POST /api/create-checkout-session`
+
+The API applies basic per-client rate limits and records minimal operational logs in D1 using hashed client identifiers.
 
 ## Payments
 
