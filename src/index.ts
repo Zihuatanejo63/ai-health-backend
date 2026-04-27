@@ -7,6 +7,7 @@ type AnalyzeSymptomsRequest = {
   severity: Severity;
   durationValue: number;
   durationUnit: DurationUnit;
+  outputLanguage?: string;
   imageBase64?: string;
   imageMimeType?: string;
 };
@@ -180,6 +181,10 @@ function validateRequest(input: unknown):
       severity: data.severity,
       durationValue: data.durationValue,
       durationUnit: data.durationUnit,
+      outputLanguage:
+        typeof data.outputLanguage === "string" && data.outputLanguage.trim().length > 0
+          ? data.outputLanguage.trim().slice(0, 40)
+          : "English",
       ...imageFields
     }
   };
@@ -199,6 +204,7 @@ async function callGemini(input: AnalyzeSymptomsRequest, env: Env): Promise<Anal
     "Return triage support only: risk level, department suggestions, and safe next steps.",
     "Include explicit escalation if high-risk signals are possible.",
     "Keep response concise, practical, and patient-friendly.",
+    `Write summary, recommendedDepartments, and nextSteps in this language: ${input.outputLanguage ?? "English"}.`,
     "Output JSON with keys: riskLevel, summary, recommendedDepartments, nextSteps.",
     "riskLevel must be one of low|medium|high.",
     "Do not wrap JSON in markdown fences.",
@@ -209,6 +215,7 @@ async function callGemini(input: AnalyzeSymptomsRequest, env: Env): Promise<Anal
       severity: input.severity,
       durationValue: input.durationValue,
       durationUnit: input.durationUnit,
+      outputLanguage: input.outputLanguage ?? "English",
       hasImage: Boolean(input.imageBase64)
     })
   ].join("\n");
@@ -322,11 +329,12 @@ async function saveCase(
       severity,
       duration_value,
       duration_unit,
+      output_language,
       risk_level,
       summary,
       recommended_departments,
       next_steps
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       result.referenceId,
@@ -334,6 +342,7 @@ async function saveCase(
       input.severity,
       input.durationValue,
       input.durationUnit,
+      input.outputLanguage ?? "English",
       result.riskLevel,
       result.summary,
       JSON.stringify(result.recommendedDepartments),
