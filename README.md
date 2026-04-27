@@ -18,7 +18,7 @@ npx wrangler d1 migrations apply ai_health_match --remote
 npm run deploy
 ```
 
-Payments are configured with a hosted checkout link from a merchant-of-record provider such as Paddle or Lemon Squeezy.
+Payments are configured with a hosted checkout link from a merchant-of-record provider such as Paddle or Lemon Squeezy. The Lemon Squeezy product should be named `AI Health Match Consultation Request`, not a specific doctor's fee.
 
 Add this to `wrangler.toml` after you create a product or subscription checkout link:
 
