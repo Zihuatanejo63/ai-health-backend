@@ -21,10 +21,26 @@ type AnalyzeSymptomsResponse = {
   referenceId: string;
 };
 
+type CheckoutRequest = {
+  doctorId: string;
+  doctorName: string;
+  amountUsd: number;
+  patientEmail?: string;
+  caseReferenceId?: string;
+};
+
+type CheckoutResponse = {
+  checkoutUrl: string;
+  sessionId: string;
+};
+
 interface Env {
   GEMINI_API_KEY: string;
   GEMINI_MODEL?: string;
   GEMINI_BASE_URL?: string;
+  FRONTEND_BASE_URL?: string;
+  PAYMENT_CHECKOUT_URL?: string;
+  PAYMENT_PROVIDER?: string;
   DB?: D1Database;
 }
 
@@ -46,88 +62,284 @@ export default {
       return new Response(null, { status: 204, headers: corsHeaders });
     }
 
-    if (url.pathname !== "/api/analyze-symptoms") {
-      return json(
-        {
-          error: {
-            code: "not_found",
-            message: "Route not found."
-          }
-        },
-        404
-      );
+    if (url.pathname === "/api/analyze-symptoms") {
+      return handleAnalyzeSymptoms(request, env);
     }
 
-    if (request.method !== "POST") {
-      return json(
-        {
-          error: {
-            code: "method_not_allowed",
-            message: "Use POST for this endpoint."
-          }
-        },
-        405
-      );
+    if (url.pathname === "/api/create-checkout-session") {
+      return handleCreateCheckoutSession(request, env);
     }
 
-    if (!env.GEMINI_API_KEY) {
-      return json(
-        {
-          error: {
-            code: "config_error",
-            message: "GEMINI_API_KEY is not configured."
-          }
-        },
-        500
-      );
-    }
-
-    let body: unknown;
-    try {
-      body = await request.json();
-    } catch {
-      return json(
-        {
-          error: {
-            code: "invalid_json",
-            message: "Request body must be valid JSON."
-          }
-        },
-        400
-      );
-    }
-
-    const validation = validateRequest(body);
-    if (!validation.valid) {
-      return json(
-        {
-          error: {
-            code: "invalid_input",
-            message: validation.message
-          }
-        },
-        400
-      );
-    }
-
-    try {
-      const aiResult = await callGemini(validation.data, env);
-      await saveCase(validation.data, aiResult, env);
-      return json(aiResult, 200);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Gemini request failed.";
-      return json(
-        {
-          error: {
-            code: "gemini_error",
-            message
-          }
-        },
-        502
-      );
-    }
+    return json(
+      {
+        error: {
+          code: "not_found",
+          message: "Route not found."
+        }
+      },
+      404
+    );
   }
 };
+
+async function handleAnalyzeSymptoms(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") {
+    return json(
+      {
+        error: {
+          code: "method_not_allowed",
+          message: "Use POST for this endpoint."
+        }
+      },
+      405
+    );
+  }
+
+  if (!env.GEMINI_API_KEY) {
+    return json(
+      {
+        error: {
+          code: "config_error",
+          message: "GEMINI_API_KEY is not configured."
+        }
+      },
+      500
+    );
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return json(
+      {
+        error: {
+          code: "invalid_json",
+          message: "Request body must be valid JSON."
+        }
+      },
+      400
+    );
+  }
+
+  const validation = validateRequest(body);
+  if (!validation.valid) {
+    return json(
+      {
+        error: {
+          code: "invalid_input",
+          message: validation.message
+        }
+      },
+      400
+    );
+  }
+
+  try {
+    const aiResult = await callGemini(validation.data, env);
+    await saveCase(validation.data, aiResult, env);
+    return json(aiResult, 200);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Gemini request failed.";
+    return json(
+      {
+        error: {
+          code: "gemini_error",
+          message
+        }
+      },
+      502
+    );
+  }
+}
+
+async function handleCreateCheckoutSession(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") {
+    return json(
+      {
+        error: {
+          code: "method_not_allowed",
+          message: "Use POST for this endpoint."
+        }
+      },
+      405
+    );
+  }
+
+  if (!env.PAYMENT_CHECKOUT_URL) {
+    return json(
+      {
+        error: {
+          code: "config_error",
+          message:
+            "PAYMENT_CHECKOUT_URL is not configured. Add a Paddle or Lemon Squeezy hosted checkout link."
+        }
+      },
+      500
+    );
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return json(
+      {
+        error: {
+          code: "invalid_json",
+          message: "Request body must be valid JSON."
+        }
+      },
+      400
+    );
+  }
+
+  const validation = validateCheckoutRequest(body);
+  if (!validation.valid) {
+    return json(
+      {
+        error: {
+          code: "invalid_input",
+          message: validation.message
+        }
+      },
+      400
+    );
+  }
+
+  try {
+    const checkout = createMerchantCheckoutLink(validation.data, env);
+    await saveCheckoutOrder(validation.data, checkout, env);
+    return json(checkout, 200);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Checkout link creation failed.";
+    return json(
+      {
+        error: {
+          code: "checkout_error",
+          message
+        }
+      },
+      502
+    );
+  }
+}
+
+function validateCheckoutRequest(input: unknown):
+  | { valid: true; data: CheckoutRequest }
+  | { valid: false; message: string } {
+  if (typeof input !== "object" || input === null) {
+    return { valid: false, message: "Request body must be an object." };
+  }
+
+  const data = input as Partial<CheckoutRequest>;
+  if (typeof data.doctorId !== "string" || data.doctorId.trim().length < 3) {
+    return { valid: false, message: "doctorId is required." };
+  }
+
+  if (typeof data.doctorName !== "string" || data.doctorName.trim().length < 3) {
+    return { valid: false, message: "doctorName is required." };
+  }
+
+  if (
+    typeof data.amountUsd !== "number" ||
+    !Number.isFinite(data.amountUsd) ||
+    data.amountUsd < 1 ||
+    data.amountUsd > 10000
+  ) {
+    return { valid: false, message: "amountUsd must be a valid positive number." };
+  }
+
+  const email =
+    typeof data.patientEmail === "string" && data.patientEmail.includes("@")
+      ? data.patientEmail.trim().slice(0, 254)
+      : undefined;
+
+  return {
+    valid: true,
+    data: {
+      doctorId: data.doctorId.trim().slice(0, 80),
+      doctorName: data.doctorName.trim().slice(0, 120),
+      amountUsd: Math.round(data.amountUsd),
+      patientEmail: email,
+      caseReferenceId:
+        typeof data.caseReferenceId === "string" && data.caseReferenceId.trim().length > 0
+          ? data.caseReferenceId.trim().slice(0, 80)
+          : undefined
+    }
+  };
+}
+
+function createMerchantCheckoutLink(
+  input: CheckoutRequest,
+  env: Env
+): CheckoutResponse {
+  if (!env.PAYMENT_CHECKOUT_URL) {
+    throw new Error("PAYMENT_CHECKOUT_URL is not configured.");
+  }
+
+  const checkoutUrl = new URL(env.PAYMENT_CHECKOUT_URL);
+  checkoutUrl.searchParams.set("doctor_id", input.doctorId);
+  checkoutUrl.searchParams.set("doctor_name", input.doctorName);
+  checkoutUrl.searchParams.set("amount_usd", String(input.amountUsd));
+  checkoutUrl.searchParams.set("provider", env.PAYMENT_PROVIDER ?? "merchant_of_record");
+  if (input.caseReferenceId) checkoutUrl.searchParams.set("case_reference_id", input.caseReferenceId);
+  if (input.patientEmail) checkoutUrl.searchParams.set("patient_email", input.patientEmail);
+
+  return {
+    checkoutUrl: checkoutUrl.toString(),
+    sessionId: `mor_${crypto.randomUUID()}`
+  };
+}
+
+async function saveCheckoutOrder(
+  input: CheckoutRequest,
+  checkout: CheckoutResponse,
+  env: Env
+): Promise<void> {
+  if (!env.DB) return;
+
+  const doctorRequest = await env.DB.prepare(
+    `INSERT INTO doctor_requests (
+      case_reference_id,
+      doctor_id,
+      patient_email,
+      status,
+      note
+    ) VALUES (?, ?, ?, ?, ?)
+    RETURNING id`
+  )
+    .bind(
+      input.caseReferenceId ?? null,
+      input.doctorId,
+      input.patientEmail ?? null,
+      "checkout_link_created",
+      `Requested ${input.doctorName}`
+    )
+    .first<{ id: number }>();
+
+  await env.DB.prepare(
+    `INSERT INTO orders (
+      case_reference_id,
+      doctor_request_id,
+      payment_provider,
+      provider_checkout_id,
+      provider_checkout_url,
+      amount_usd,
+      status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+  )
+    .bind(
+      input.caseReferenceId ?? null,
+      doctorRequest?.id ?? null,
+      env.PAYMENT_PROVIDER ?? "merchant_of_record",
+      checkout.sessionId,
+      checkout.checkoutUrl,
+      input.amountUsd,
+      "checkout_link_created"
+    )
+    .run();
+}
 
 function validateRequest(input: unknown):
   | { valid: true; data: AnalyzeSymptomsRequest }

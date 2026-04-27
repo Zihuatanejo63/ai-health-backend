@@ -21,8 +21,6 @@ CREATE TABLE IF NOT EXISTS orders (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   case_reference_id TEXT,
   doctor_request_id INTEGER,
-  stripe_checkout_session_id TEXT UNIQUE,
-  stripe_payment_intent_id TEXT,
   amount_usd INTEGER NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -35,4 +33,3 @@ CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_doctor_requests_status ON doctor_requests(status);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_case_reference_id ON orders(case_reference_id);
-

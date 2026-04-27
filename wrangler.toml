@@ -9,6 +9,11 @@ routes = [
 [vars]
 GEMINI_MODEL = "gemini-2.5-flash-lite"
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com"
+FRONTEND_BASE_URL = "https://healthmatchai.com"
+PAYMENT_PROVIDER = "merchant_of_record"
+
+# Add your Paddle or Lemon Squeezy hosted checkout URL after creating a product:
+# PAYMENT_CHECKOUT_URL = "https://your-provider-checkout-link"
 
 [[d1_databases]]
 binding = "DB"
