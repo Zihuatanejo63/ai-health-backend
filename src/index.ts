@@ -1,6 +1,13 @@
 type Severity = "mild" | "moderate" | "severe";
 type DurationUnit = "hours" | "days" | "weeks" | "months";
 type RiskLevel = "low" | "medium" | "high";
+type CareLevel =
+  | "Emergency"
+  | "Urgent Care"
+  | "Primary Care"
+  | "Telehealth"
+  | "Pharmacy/Self-care"
+  | "Monitor at home";
 
 type AnalyzeSymptomsRequest = {
   symptoms: string;
@@ -14,9 +21,12 @@ type AnalyzeSymptomsRequest = {
 
 type AnalyzeSymptomsResponse = {
   riskLevel: RiskLevel;
-  summary: string;
-  recommendedDepartments: string[];
-  nextSteps: string[];
+  redFlags: string[];
+  recommendedCareLevel: CareLevel;
+  possibleCauses: string[];
+  whatToMonitor: string[];
+  doctorReadySummary: string;
+  insuranceNavigation: string[];
   disclaimer: string;
   referenceId: string;
 };
@@ -60,8 +70,9 @@ interface Env {
 }
 
 const DISCLAIMER =
-  "Medical disclaimer: This output is AI-generated triage support, not a diagnosis. " +
-  "Always consult a licensed clinician. If symptoms are severe, worsening, or life-threatening, seek emergency care.";
+  "This tool does not provide medical diagnosis, treatment, prescription, or insurance advice. " +
+  "Insurance information is educational only. " +
+  "For plan enrollment, speak with a licensed insurance agent or broker.";
 
 const RATE_LIMIT_WINDOW_SECONDS = 60;
 const ANALYZE_RATE_LIMIT = 12;
@@ -755,15 +766,18 @@ async function callGemini(input: AnalyzeSymptomsRequest, env: Env): Promise<Anal
   );
 
   const prompt = [
-    "You are a medical triage assistant.",
-    "You must NOT provide diagnosis, certainty claims, prescriptions, or treatment plans.",
+    "You are an AI health triage and insurance navigation assistant.",
+    "You must NOT provide diagnosis, certainty claims, prescriptions, treatment plans, or insurance advice.",
     "If an image is provided, use it only as visual context and do not diagnose from it.",
-    "Return triage support only: risk level, department suggestions, and safe next steps.",
+    "Return triage support only: risk level, red flags, care level guidance, monitoring points, and educational insurance navigation.",
     "Include explicit escalation if high-risk signals are possible.",
+    "Do not recommend a specific insurance plan, carrier, product, or enrollment choice.",
     "Keep response concise, practical, and patient-friendly.",
-    `Write summary, recommendedDepartments, and nextSteps in this language: ${input.outputLanguage ?? "English"}.`,
-    "Output JSON with keys: riskLevel, summary, recommendedDepartments, nextSteps.",
+    `Write redFlags, possibleCauses, whatToMonitor, and doctorReadySummary in this language: ${input.outputLanguage ?? "English"}.`,
+    "Output JSON with keys: riskLevel, redFlags, recommendedCareLevel, possibleCauses, whatToMonitor, doctorReadySummary.",
     "riskLevel must be one of low|medium|high.",
+    "recommendedCareLevel must be one of: Emergency, Urgent Care, Primary Care, Telehealth, Pharmacy/Self-care, Monitor at home.",
+    "possibleCauses must be framed as possibilities to discuss, not diagnoses.",
     "Do not wrap JSON in markdown fences.",
     "",
     "Input:",
@@ -839,9 +853,11 @@ async function callGemini(input: AnalyzeSymptomsRequest, env: Env): Promise<Anal
 
   let parsed: {
     riskLevel?: string;
-    summary?: string;
-    recommendedDepartments?: string[];
-    nextSteps?: string[];
+    redFlags?: string[];
+    recommendedCareLevel?: string;
+    possibleCauses?: string[];
+    whatToMonitor?: string[];
+    doctorReadySummary?: string;
   };
 
   try {
@@ -851,22 +867,31 @@ async function callGemini(input: AnalyzeSymptomsRequest, env: Env): Promise<Anal
   }
 
   const riskLevel = normalizeRiskLevel(parsed.riskLevel);
-  const summary = typeof parsed.summary === "string" ? parsed.summary : "No summary generated.";
-  const recommendedDepartments = normalizeStringArray(parsed.recommendedDepartments);
-  const nextSteps = normalizeStringArray(parsed.nextSteps);
+  const redFlags = normalizeStringArray(parsed.redFlags);
+  const possibleCauses = normalizeStringArray(parsed.possibleCauses);
+  const whatToMonitor = normalizeStringArray(parsed.whatToMonitor);
+  const doctorReadySummary =
+    typeof parsed.doctorReadySummary === "string"
+      ? parsed.doctorReadySummary
+      : "Symptom summary unavailable. Share your symptoms, severity, duration, and any changes with a licensed clinician.";
 
   return {
     riskLevel,
-    summary,
-    recommendedDepartments:
-      recommendedDepartments.length > 0 ? recommendedDepartments : ["General Medicine"],
-    nextSteps:
-      nextSteps.length > 0
-        ? nextSteps
-        : [
-            "Book a licensed clinician for full evaluation.",
-            "Monitor symptom changes and seek urgent care if symptoms worsen."
-          ],
+    redFlags:
+      redFlags.length > 0
+        ? redFlags
+        : ["Seek emergency care if symptoms become severe, rapidly worsen, or feel life-threatening."],
+    recommendedCareLevel: normalizeCareLevel(parsed.recommendedCareLevel, riskLevel),
+    possibleCauses:
+      possibleCauses.length > 0
+        ? possibleCauses
+        : ["Several causes are possible; a licensed clinician can evaluate based on exam and history."],
+    whatToMonitor:
+      whatToMonitor.length > 0
+        ? whatToMonitor
+        : ["Symptom severity, duration, new symptoms, fever, breathing changes, pain pattern, and function."],
+    doctorReadySummary,
+    insuranceNavigation: createInsuranceNavigation(),
     disclaimer: DISCLAIMER,
     referenceId: generateReferenceId()
   };
@@ -901,9 +926,9 @@ async function saveCase(
       input.durationUnit,
       input.outputLanguage ?? "English",
       result.riskLevel,
-      result.summary,
-      JSON.stringify(result.recommendedDepartments),
-      JSON.stringify(result.nextSteps)
+      result.doctorReadySummary,
+      JSON.stringify([result.recommendedCareLevel]),
+      JSON.stringify(result.whatToMonitor)
     )
     .run();
 }
@@ -931,6 +956,34 @@ function extractJson(raw: string): string {
 function normalizeRiskLevel(value: string | undefined): RiskLevel {
   if (value === "low" || value === "high" || value === "medium") return value;
   return "medium";
+}
+
+function normalizeCareLevel(value: string | undefined, riskLevel: RiskLevel): CareLevel {
+  const allowed: CareLevel[] = [
+    "Emergency",
+    "Urgent Care",
+    "Primary Care",
+    "Telehealth",
+    "Pharmacy/Self-care",
+    "Monitor at home"
+  ];
+  const matched = allowed.find((level) => level === value);
+  if (matched) return matched;
+  if (riskLevel === "high") return "Emergency";
+  if (riskLevel === "medium") return "Urgent Care";
+  return "Primary Care";
+}
+
+function createInsuranceNavigation(): string[] {
+  return [
+    "ACA Marketplace plan: review network, deductible, urgent care, ER, telehealth, and prescription rules before enrolling.",
+    "Employer plan: check in-network care, primary care requirements, copays, deductible status, and prior authorization rules.",
+    "Medicaid/CHIP reminder: if income, pregnancy, disability, household, or child coverage may qualify, check your state eligibility site.",
+    "Student plan: compare campus health services, referrals, local network access, and coverage away from school.",
+    "Travel medical insurance: confirm emergency, evacuation, pre-existing condition, and destination-specific exclusions before travel.",
+    "Short-term plan warning: short-term coverage may exclude pre-existing conditions, prescriptions, maternity, mental health, or preventive care.",
+    "Talk to a licensed insurance partner: for enrollment decisions, subsidies, plan eligibility, and plan-specific coverage questions."
+  ];
 }
 
 function normalizeStringArray(value: unknown): string[] {
