@@ -1,0 +1,29 @@
+name = "ai-health-backend"
+main = "src/index.ts"
+compatibility_date = "2024-07-25"
+
+routes = [
+  { pattern = "api.healthmatchai.com", custom_domain = true }
+]
+
+[vars]
+GEMINI_MODEL = "gemini-2.5-flash-lite"
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com"
+FRONTEND_BASE_URL = "https://healthmatchai.com"
+PAYMENT_PROVIDER = "creem"
+CREEM_API_BASE_URL = "https://api.creem.io"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ai_health_match"
+database_id = "af3d7ff3-399b-434c-81ed-fb3f1e8af5da"
+
+# Set secrets with:
+# wrangler secret put GEMINI_API_KEY
+# wrangler secret put ADMIN_API_TOKEN
+# wrangler secret put DATA_ENCRYPTION_KEY
+# wrangler secret put CREEM_API_KEY
+# wrangler secret put CREEM_WEBHOOK_SECRET
+# wrangler secret put CREEM_ONE_TIME_REPORT_PRODUCT_ID
+# wrangler secret put CREEM_PLUS_MONTHLY_PRODUCT_ID
+# wrangler secret put CREEM_PLUS_YEARLY_PRODUCT_ID
