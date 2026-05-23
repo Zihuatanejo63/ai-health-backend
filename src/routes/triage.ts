@@ -47,6 +47,8 @@ export async function handleTriage(request: Request, env: Env): Promise<Response
     coverageQuestions: string[];
   } | null = null;
 
+  let aiReviewStatus: "generated" | "fallback" | "unavailable" = "unavailable";
+
   if (env.GEMINI_API_KEY && !triage.isEmergency) {
     try {
       aiContent = await generateTriageContent(
@@ -64,9 +66,13 @@ export async function handleTriage(request: Request, env: Env): Promise<Response
         env.GEMINI_MODEL,
         env.GEMINI_BASE_URL
       );
+      aiReviewStatus = "generated";
     } catch (error) {
       console.error("Gemini triage failed:", error instanceof Error ? error.message : String(error));
+      aiReviewStatus = "fallback";
     }
+  } else if (env.GEMINI_API_KEY && triage.isEmergency) {
+    aiReviewStatus = "unavailable";
   }
 
   const referenceId = `AHM-${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(2, 14)}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
@@ -86,7 +92,7 @@ export async function handleTriage(request: Request, env: Env): Promise<Response
     coverageQuestions: aiContent?.coverageQuestions || ["What is my copay for this type of visit?", "Is this provider in-network?"],
     disclaimer: "HealthMatchAI does not diagnose, prescribe, treat, or replace professional medical care. This is educational guidance only.",
     referenceId,
-    aiGenerated: aiContent !== null,
+    aiReviewStatus,
   };
 
   // Save for logged-in users

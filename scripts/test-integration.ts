@@ -341,7 +341,7 @@ async function main() {
       assert(typeof data.riskLevel === "string", "Valid triage: has riskLevel");
       assert(typeof data.recommendedCare === "string", "Valid triage: has recommendedCare");
       assert(typeof data.disclaimer === "string", "Valid triage: has disclaimer");
-      assert(data.aiGenerated === false, "Valid triage: aiGenerated is false without API key");
+      assert(data.aiReviewStatus === "unavailable", "Valid triage: aiReviewStatus is unavailable without API key");
     } catch (err: unknown) {
       const e = err as { message?: string };
       assert(false, `Valid triage should not throw: ${e.message || "unknown"}`);
@@ -394,7 +394,7 @@ async function main() {
     }) as Parameters<typeof handleTriage>[1]);
     const data = await res.json() as Record<string, unknown>;
     assertEq(data.riskLevel, "Crisis", "Crisis: riskLevel is Crisis");
-    assert(data.aiGenerated === false, "Crisis: aiGenerated is false");
+    assert(data.aiReviewStatus === "unavailable", "Crisis: aiReviewStatus is unavailable");
     assert(typeof data.escalationAdvice === "object", "Crisis: has escalationAdvice");
   }
 
