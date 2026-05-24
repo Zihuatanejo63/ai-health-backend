@@ -11,7 +11,7 @@
  */
 
 import { errorResponse } from "./lib/errors";
-import { handleRequestLink, handleVerify, handleLogout, handleMe } from "./routes/auth";
+import { handleRequestLink, handleVerify, handleLogout, handleMe, handleRegister, handleLogin } from "./routes/auth";
 import { handleTriage } from "./routes/triage";
 import {
   handleGetSymptomChecks,
@@ -93,6 +93,12 @@ export default {
       }
       if (url.pathname === "/api/auth/logout") {
         return withCors(await handleLogout(request, env), request, env);
+      }
+      if (url.pathname === "/api/auth/register") {
+        return withCors(await handleRegister(request, env), request, env);
+      }
+      if (url.pathname === "/api/auth/login") {
+        return withCors(await handleLogin(request, env), request, env);
       }
       if (url.pathname === "/api/me") {
         return withCors(await handleMe(request, env), request, env);

@@ -1,5 +1,6 @@
 /**
  * Auth routes: magic link request, verify, logout, /api/me.
+ * Email+password: register, login.
  * Rate limits: 1 request per email per minute, max per IP per hour.
  */
 
@@ -147,7 +148,11 @@ export async function handleRequestLink(request: Request, env: Env): Promise<Res
         message: error instanceof Error ? error.message : "Email send failed",
       });
     }
-    throw new AppError(503, "email_send_failed", "We could not send the sign-in email right now. Please try again later.");
+    // Don't block login — return a graceful message suggesting email+password
+    return jsonResponse({
+      ok: true,
+      message: "Sign-in link is not available right now. Please use email and password to log in or create an account.",
+    });
   }
 
   return jsonResponse({
@@ -255,4 +260,126 @@ export async function handleMe(request: Request, env: Env): Promise<Response> {
       ? { plan: entitlement.plan, status: entitlement.status, currentPeriodEnd: entitlement.current_period_end || undefined }
       : null,
   });
+}
+
+// ---- Email + Password Auth ----
+
+async function hashPassword(password: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const salt = crypto.randomUUID();
+  const data = encoder.encode(password + salt);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  const hash = Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  return `${salt}:${hash}`;
+}
+
+async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
+  const [salt, hash] = storedHash.split(":");
+  if (!salt || !hash) return false;
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password + salt);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  const computed = Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  return computed === hash;
+}
+
+export async function handleRegister(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") {
+    throw new AppError(405, "method_not_allowed", "Use POST for this endpoint.");
+  }
+
+  let body: { email?: string; password?: string; name?: string };
+  try {
+    body = (await request.json()) as { email?: string; password?: string; name?: string };
+  } catch {
+    throw badRequest("Request body must be valid JSON.");
+  }
+
+  const email = (body.email || "").trim().toLowerCase();
+  const password = (body.password || "").trim();
+  const name = (body.name || email).trim();
+
+  if (!email || !email.includes("@") || email.length > 254) {
+    throw badRequest("Please enter a valid email address.");
+  }
+  if (!password || password.length < 8) {
+    throw badRequest("Password must be at least 8 characters.");
+  }
+
+  if (!env.DB) {
+    throw new AppError(500, "db_unavailable", "Database is not configured.");
+  }
+
+  // Check if user already exists
+  const existing = await env.DB.prepare("SELECT id FROM users WHERE email = ?")
+    .bind(email).first<{ id: string }>();
+
+  if (existing) {
+    throw new AppError(409, "email_taken", "An account with this email already exists. Please log in instead.");
+  }
+
+  const passwordHash = await hashPassword(password);
+  const userId = crypto.randomUUID();
+  const now = new Date().toISOString();
+
+  await env.DB.prepare(
+    "INSERT INTO users (id, email, name, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, 'user', ?, ?)"
+  ).bind(userId, email, name, passwordHash, now, now).run();
+
+  const { cookie } = await createSession(env.DB, userId);
+
+  return jsonResponse({
+    ok: true,
+    user: { id: userId, email, name, role: "user" },
+    message: "Account created successfully.",
+  }, 201, { "Set-Cookie": cookie });
+}
+
+export async function handleLogin(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") {
+    throw new AppError(405, "method_not_allowed", "Use POST for this endpoint.");
+  }
+
+  let body: { email?: string; password?: string };
+  try {
+    body = (await request.json()) as { email?: string; password?: string };
+  } catch {
+    throw badRequest("Request body must be valid JSON.");
+  }
+
+  const email = (body.email || "").trim().toLowerCase();
+  const password = (body.password || "").trim();
+
+  if (!email || !password) {
+    throw badRequest("Email and password are required.");
+  }
+
+  if (!env.DB) {
+    throw new AppError(500, "db_unavailable", "Database is not configured.");
+  }
+
+  const user = await env.DB.prepare(
+    "SELECT id, email, name, role, password_hash FROM users WHERE email = ?"
+  ).bind(email).first<{ id: string; email: string; name: string; role: string; password_hash: string | null }>();
+
+  if (!user || !user.password_hash) {
+    throw new AppError(401, "invalid_credentials", "Invalid email or password. If you haven't created an account yet, please sign up.");
+  }
+
+  const valid = await verifyPassword(password, user.password_hash);
+  if (!valid) {
+    throw new AppError(401, "invalid_credentials", "Invalid email or password.");
+  }
+
+  const { cookie } = await createSession(env.DB, user.id);
+
+  return jsonResponse({
+    ok: true,
+    user: { id: user.id, email: user.email, name: user.name, role: user.role },
+    message: "Logged in successfully.",
+  }, 200, { "Set-Cookie": cookie });
 }
