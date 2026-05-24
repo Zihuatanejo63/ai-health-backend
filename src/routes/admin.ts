@@ -122,7 +122,7 @@ export async function handleAdminUserLookup(request: Request, env: Env): Promise
       "SELECT plan, status, provider, creem_checkout_id, creem_subscription_id, current_period_end, created_at, updated_at FROM entitlements WHERE user_id = ? ORDER BY created_at DESC"
     ).bind(userId).all(),
     db.prepare(
-      "SELECT id, plan, status, created_at FROM checkout_sessions WHERE user_id = ? ORDER BY created_at DESC LIMIT 10"
+      "SELECT id, plan_id, status, created_at FROM checkout_sessions WHERE user_id = ? ORDER BY created_at DESC LIMIT 10"
     ).bind(userId).all(),
     db.prepare(
       "SELECT event_type, created_at FROM payment_events WHERE payload LIKE ? ORDER BY created_at DESC LIMIT 10"

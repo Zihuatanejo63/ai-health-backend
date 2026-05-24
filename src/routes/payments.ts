@@ -144,10 +144,22 @@ export async function handleCreateCheckout(request: Request, env: Env): Promise<
 
     // Track checkout session
     const checkoutSessionId = crypto.randomUUID();
+    const now = new Date().toISOString();
     await db.prepare(
-      `INSERT INTO checkout_sessions (id, user_id, plan, provider, provider_checkout_id, status, created_at, updated_at)
-       VALUES (?, ?, ?, 'creem', ?, 'pending', ?, ?)`
-    ).bind(checkoutSessionId, session.user.id, body.plan, (creemData.id as string) || requestId, new Date().toISOString(), new Date().toISOString()).run();
+      `INSERT INTO checkout_sessions (id, user_id, plan_id, product_id, provider, provider_checkout_id, checkout_url, status, amount, currency, raw_response, created_at, updated_at)
+       VALUES (?, ?, 'plus_monthly', ?, 'creem', ?, ?, 'pending', ?, ?, ?, ?, ?)`
+    ).bind(
+      checkoutSessionId,
+      session.user.id,
+      plusMonthlyProductId,
+      (creemData.id as string) || requestId,
+      checkoutUrl,
+      (creemData.amount as number) ?? null,
+      (creemData.currency as string) || "usd",
+      creemResponseText,
+      now,
+      now
+    ).run();
 
     return jsonResponse({
       ok: true,

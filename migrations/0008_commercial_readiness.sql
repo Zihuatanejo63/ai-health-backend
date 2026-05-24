@@ -64,10 +64,15 @@ CREATE TABLE IF NOT EXISTS payment_events (
 CREATE TABLE IF NOT EXISTS checkout_sessions (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
-  plan TEXT NOT NULL,
+  plan_id TEXT NOT NULL DEFAULT 'plus_monthly',
+  product_id TEXT,
   provider TEXT DEFAULT 'creem',
   provider_checkout_id TEXT,
+  checkout_url TEXT,
   status TEXT DEFAULT 'pending',
+  amount INTEGER,
+  currency TEXT DEFAULT 'usd',
+  raw_response TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
