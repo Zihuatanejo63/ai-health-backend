@@ -81,6 +81,16 @@ export default {
 
     const url = new URL(request.url);
 
+    // Log env check on first cold start per path
+    if (url.pathname === "/api/create-checkout-session") {
+      console.log("[env check]", {
+        paymentProvider: env.PAYMENT_PROVIDER || "unset",
+        creemBaseUrl: env.CREEM_API_BASE_URL || "unset",
+        hasCreemApiKey: !!env.CREEM_API_KEY,
+        hasPlusProductId: !!env.CREEM_PLUS_MONTHLY_PRODUCT_ID,
+      });
+    }
+
     try {
       // Auth routes
       if (url.pathname === "/api/auth/request-link") {
