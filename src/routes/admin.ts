@@ -109,7 +109,7 @@ export async function handleAdminUserLookup(request: Request, env: Env): Promise
   }
 
   const user = await db.prepare(
-    "SELECT id, email, name, role, created_at FROM users WHERE email = ? OR id = ? LIMIT 1"
+    "SELECT id, email, display_name as name, 'user' as role, created_at FROM users WHERE email = ? OR id = ? LIMIT 1"
   ).bind(identifier, identifier).first<{
     id: string; email: string; name: string; role: string; created_at: string;
   }>();

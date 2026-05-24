@@ -73,7 +73,7 @@ export async function verifyAndGetSession(
 
   const row = await db
     .prepare(
-      `SELECT s.id, s.user_id, s.expires_at, u.email, u.name, u.role
+      `SELECT s.id, s.user_id, s.expires_at, u.email, u.display_name as name, 'user' as role
        FROM sessions s
        JOIN users u ON u.id = s.user_id
        WHERE s.session_hash = ? AND s.expires_at > ?`

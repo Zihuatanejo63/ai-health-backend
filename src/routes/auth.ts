@@ -200,15 +200,15 @@ export async function handleVerify(request: Request, env: Env): Promise<Response
     .bind(new Date().toISOString(), row.id).run();
 
   // Find or create user
-  let user = await env.DB.prepare("SELECT id, email, name, role FROM users WHERE email = ?")
-    .bind(row.email).first<{ id: string; email: string; name: string; role: string }>();
+  let user = await env.DB.prepare("SELECT id, email, display_name as name FROM users WHERE email = ?")
+    .bind(row.email).first<{ id: string; email: string; name: string }>();
 
   if (!user) {
     const userId = crypto.randomUUID();
     await env.DB.prepare(
-      "INSERT INTO users (id, email, name, role, created_at, updated_at) VALUES (?, ?, ?, 'user', ?, ?)"
-    ).bind(userId, row.email, row.email, new Date().toISOString(), new Date().toISOString()).run();
-    user = { id: userId, email: row.email, name: row.email, role: "user" };
+      "INSERT INTO users (id, email, display_name, preferred_language, created_at) VALUES (?, ?, ?, 'English', ?)"
+    ).bind(userId, row.email, row.email, new Date().toISOString()).run();
+    user = { id: userId, email: row.email, name: row.email };
   }
 
   const { cookie } = await createSession(env.DB, user.id);
@@ -301,13 +301,17 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
 
   const email = (body.email || "").trim().toLowerCase();
   const password = (body.password || "").trim();
-  const name = (body.name || email).trim();
+  const displayName = (body.name || email).trim();
 
   if (!email || !email.includes("@") || email.length > 254) {
     throw badRequest("Please enter a valid email address.");
   }
   if (!password || password.length < 8) {
-    throw badRequest("Password must be at least 8 characters.");
+    return jsonResponse({
+      ok: false,
+      code: "INVALID_PASSWORD",
+      message: "Password must be at least 8 characters.",
+    }, 400);
   }
 
   if (!env.DB) {
@@ -319,22 +323,34 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
     .bind(email).first<{ id: string }>();
 
   if (existing) {
-    throw new AppError(409, "email_taken", "An account with this email already exists. Please log in instead.");
+    return jsonResponse({
+      ok: false,
+      code: "EMAIL_ALREADY_EXISTS",
+      message: "Email already exists.",
+    }, 409);
   }
 
   const passwordHash = await hashPassword(password);
   const userId = crypto.randomUUID();
   const now = new Date().toISOString();
 
-  await env.DB.prepare(
-    "INSERT INTO users (id, email, name, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, 'user', ?, ?)"
-  ).bind(userId, email, name, passwordHash, now, now).run();
+  try {
+    await env.DB.prepare(
+      "INSERT INTO users (id, email, display_name, preferred_language, password_hash, created_at) VALUES (?, ?, ?, 'English', ?, ?)"
+    ).bind(userId, email, displayName, passwordHash, now).run();
+  } catch (error) {
+    return jsonResponse({
+      ok: false,
+      code: "D1_INSERT_FAILED",
+      message: error instanceof Error ? error.message : "Database insert failed.",
+    }, 500);
+  }
 
   const { cookie } = await createSession(env.DB, userId);
 
   return jsonResponse({
     ok: true,
-    user: { id: userId, email, name, role: "user" },
+    user: { id: userId, email, name: displayName },
     message: "Account created successfully.",
   }, 201, { "Set-Cookie": cookie });
 }
@@ -363,8 +379,8 @@ export async function handleLogin(request: Request, env: Env): Promise<Response>
   }
 
   const user = await env.DB.prepare(
-    "SELECT id, email, name, role, password_hash FROM users WHERE email = ?"
-  ).bind(email).first<{ id: string; email: string; name: string; role: string; password_hash: string | null }>();
+    "SELECT id, email, display_name, password_hash FROM users WHERE email = ?"
+  ).bind(email).first<{ id: string; email: string; display_name: string; password_hash: string | null }>();
 
   if (!user || !user.password_hash) {
     throw new AppError(401, "invalid_credentials", "Invalid email or password. If you haven't created an account yet, please sign up.");
@@ -379,7 +395,7 @@ export async function handleLogin(request: Request, env: Env): Promise<Response>
 
   return jsonResponse({
     ok: true,
-    user: { id: user.id, email: user.email, name: user.name, role: user.role },
+    user: { id: user.id, email: user.email, name: user.display_name },
     message: "Logged in successfully.",
   }, 200, { "Set-Cookie": cookie });
 }
