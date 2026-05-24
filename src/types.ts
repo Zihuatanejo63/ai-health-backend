@@ -66,7 +66,7 @@ export interface TriageApiResponse {
 }
 
 export interface CreateCheckoutRequest {
-  plan: "one_time_report" | "plus_monthly" | "plus_yearly";
+  plan: "plus_monthly";
 }
 
 export interface CreateCheckoutResponse {

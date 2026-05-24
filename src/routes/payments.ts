@@ -12,14 +12,12 @@ interface Env {
   DB?: D1Database;
   CREEM_API_KEY?: string;
   CREEM_WEBHOOK_SECRET?: string;
-  CREEM_ONE_TIME_REPORT_PRODUCT_ID?: string;
   CREEM_PLUS_MONTHLY_PRODUCT_ID?: string;
-  CREEM_PLUS_YEARLY_PRODUCT_ID?: string;
   CREEM_API_BASE_URL?: string;
   FRONTEND_BASE_URL?: string;
 }
 
-const SUPPORTED_PLANS = ["one_time_report", "plus_monthly", "plus_yearly"] as const;
+const SUPPORTED_PLANS = ["plus_monthly"] as const;
 
 function requireDb(env: Env): D1Database {
   if (!env.DB) throw new AppError(500, "db_unavailable", "Database is not configured.");
@@ -28,8 +26,6 @@ function requireDb(env: Env): D1Database {
 
 function getProductId(plan: string, env: Env): string {
   switch (plan) {
-    case "one_time_report": return env.CREEM_ONE_TIME_REPORT_PRODUCT_ID || "";
-    case "plus_yearly": return env.CREEM_PLUS_YEARLY_PRODUCT_ID || "";
     case "plus_monthly": return env.CREEM_PLUS_MONTHLY_PRODUCT_ID || "";
     default: return "";
   }
@@ -52,7 +48,7 @@ export async function handleCreateCheckout(request: Request, env: Env): Promise<
   }
 
   if (!body.plan || !SUPPORTED_PLANS.includes(body.plan)) {
-    throw badRequest(`Invalid plan. Must be one of: ${SUPPORTED_PLANS.join(", ")}`);
+    throw new AppError(400, "unsupported_plan", "Unsupported plan.");
   }
 
   // All paid plans require login so webhooks can bind entitlements to a user
@@ -241,16 +237,7 @@ export async function handleCreemWebhook(request: Request, env: Env): Promise<Re
     return jsonResponse({ received: true, warning: "no_user_id" });
   }
 
-  const entitlementPlan = plan === "plus_monthly" || plan === "plus_yearly" ? "plus" : plan;
-
   switch (eventType) {
-    case "checkout.completed":
-    case "payment.completed": {
-      if (entitlementPlan === "one_time_report") {
-        await upsertEntitlement(db, userId, "one_time_report", "active", customerId, eventId, subscriptionId);
-      }
-      break;
-    }
     case "subscription.active":
     case "subscription.paid": {
       await upsertEntitlement(db, userId, "plus", "active", customerId, eventId, subscriptionId);
@@ -263,12 +250,12 @@ export async function handleCreemWebhook(request: Request, env: Env): Promise<Re
       break;
     }
     case "refund.created": {
-      await updateEntitlementStatus(db, userId, entitlementPlan, "refunded");
+      await updateEntitlementStatus(db, userId, "plus", "refunded");
       break;
     }
     case "dispute.created":
     case "chargeback.created": {
-      await updateEntitlementStatus(db, userId, entitlementPlan, "chargeback");
+      await updateEntitlementStatus(db, userId, "plus", "chargeback");
       break;
     }
     default:

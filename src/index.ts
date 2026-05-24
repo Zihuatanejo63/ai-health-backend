@@ -38,9 +38,7 @@ interface Env {
   DATA_ENCRYPTION_KEY?: string;
   CREEM_API_KEY?: string;
   CREEM_WEBHOOK_SECRET?: string;
-  CREEM_ONE_TIME_REPORT_PRODUCT_ID?: string;
   CREEM_PLUS_MONTHLY_PRODUCT_ID?: string;
-  CREEM_PLUS_YEARLY_PRODUCT_ID?: string;
   CREEM_API_BASE_URL?: string;
   DB?: D1Database;
 }

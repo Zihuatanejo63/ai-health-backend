@@ -254,7 +254,7 @@ export async function handleMe(request: Request, env: Env): Promise<Response> {
     `SELECT plan, status, current_period_end
      FROM entitlements
      WHERE user_id = ? AND status = 'active'
-     ORDER BY CASE plan WHEN 'plus' THEN 1 WHEN 'one_time_report' THEN 2 ELSE 3 END
+     ORDER BY CASE plan WHEN 'plus' THEN 1 ELSE 2 END
      LIMIT 1`
   ).bind(session.user.id).first<{ plan: string; status: string; current_period_end: string | null }>();
 
