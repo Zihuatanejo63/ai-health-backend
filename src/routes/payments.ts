@@ -261,22 +261,22 @@ export async function handleCreemWebhook(request: Request, env: Env): Promise<Re
   switch (eventType) {
     case "subscription.active":
     case "subscription.paid": {
-      await upsertEntitlement(db, userId, "plus", "active", customerId, eventId, subscriptionId);
+      await upsertEntitlement(db, userId, "plus_monthly", "active", customerId, eventId, subscriptionId);
       break;
     }
     case "subscription.canceled":
     case "subscription.expired":
     case "subscription.paused": {
-      await updateEntitlementStatus(db, userId, "plus", "cancelled");
+      await updateEntitlementStatus(db, userId, "plus_monthly", "cancelled");
       break;
     }
     case "refund.created": {
-      await updateEntitlementStatus(db, userId, "plus", "refunded");
+      await updateEntitlementStatus(db, userId, "plus_monthly", "refunded");
       break;
     }
     case "dispute.created":
     case "chargeback.created": {
-      await updateEntitlementStatus(db, userId, "plus", "chargeback");
+      await updateEntitlementStatus(db, userId, "plus_monthly", "chargeback");
       break;
     }
     default:
@@ -294,33 +294,33 @@ export async function handleCreemWebhook(request: Request, env: Env): Promise<Re
 }
 
 async function upsertEntitlement(
-  db: D1Database, userId: string, plan: string, status: string,
+  db: D1Database, userId: string, planId: string, status: string,
   customerId: string, checkoutId: string, subscriptionId: string
 ): Promise<void> {
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
 
   const existing = await db.prepare(
-    "SELECT id FROM entitlements WHERE user_id = ? AND plan = ?"
-  ).bind(userId, plan).first<{ id: string }>();
+    "SELECT id FROM entitlements WHERE user_id = ? AND plan_id = ?"
+  ).bind(userId, planId).first<{ id: string }>();
 
   if (existing) {
     await db.prepare(
-      `UPDATE entitlements SET status = ?, creem_customer_id = ?, creem_checkout_id = ?,
-       creem_subscription_id = ?, updated_at = ? WHERE id = ?`
+      `UPDATE entitlements SET status = ?, provider_customer_id = ?, provider_checkout_id = ?,
+       provider_subscription_id = ?, updated_at = ? WHERE id = ?`
     ).bind(status, customerId, checkoutId, subscriptionId, now, existing.id).run();
   } else {
     await db.prepare(
-      `INSERT INTO entitlements (id, user_id, plan, status, provider, creem_customer_id, creem_checkout_id, creem_subscription_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'creem', ?, ?, ?, ?, ?)`
-    ).bind(id, userId, plan, status, customerId, checkoutId, subscriptionId, now, now).run();
+      `INSERT INTO entitlements (id, user_id, plan_id, product_id, status, provider, provider_customer_id, provider_checkout_id, provider_subscription_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'creem', ?, ?, ?, ?, ?)`
+    ).bind(id, userId, planId, planId, status, customerId, checkoutId, subscriptionId, now, now).run();
   }
 }
 
 async function updateEntitlementStatus(
-  db: D1Database, userId: string, plan: string, status: string
+  db: D1Database, userId: string, planId: string, status: string
 ): Promise<void> {
   await db.prepare(
-    "UPDATE entitlements SET status = ?, updated_at = ? WHERE user_id = ? AND plan = ?"
-  ).bind(status, new Date().toISOString(), userId, plan).run();
+    "UPDATE entitlements SET status = ?, updated_at = ? WHERE user_id = ? AND plan_id = ?"
+  ).bind(status, new Date().toISOString(), userId, planId).run();
 }

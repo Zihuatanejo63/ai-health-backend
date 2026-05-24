@@ -77,10 +77,10 @@ export interface UserResponse {
     role: string;
   } | null;
   entitlement: {
-    plan: string;
+    planId: string;
     status: string;
     currentPeriodEnd?: string;
-  } | null;
+  };
 }
 
 export interface RequestLinkRequest {

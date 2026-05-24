@@ -250,19 +250,24 @@ export async function handleMe(request: Request, env: Env): Promise<Response> {
     return jsonResponse({ user: null, entitlement: null });
   }
 
-  const entitlement = await env.DB.prepare(
-    `SELECT plan, status, current_period_end
-     FROM entitlements
-     WHERE user_id = ? AND status = 'active'
-     ORDER BY CASE plan WHEN 'plus' THEN 1 ELSE 2 END
-     LIMIT 1`
-  ).bind(session.user.id).first<{ plan: string; status: string; current_period_end: string | null }>();
+  let entitlement: { plan_id: string; status: string; current_period_end: string | null } | null = null;
+  try {
+    entitlement = await env.DB.prepare(
+      `SELECT plan_id, status, current_period_end
+       FROM entitlements
+       WHERE user_id = ? AND status = 'active'
+       ORDER BY CASE plan_id WHEN 'plus_monthly' THEN 1 ELSE 2 END
+       LIMIT 1`
+    ).bind(session.user.id).first<{ plan_id: string; status: string; current_period_end: string | null }>();
+  } catch {
+    // entitlements table may not exist yet — return free user
+  }
 
   return jsonResponse({
     user: session.user,
     entitlement: entitlement
-      ? { plan: entitlement.plan, status: entitlement.status, currentPeriodEnd: entitlement.current_period_end || undefined }
-      : null,
+      ? { planId: entitlement.plan_id, status: entitlement.status, currentPeriodEnd: entitlement.current_period_end || undefined }
+      : { planId: "free", status: "inactive" },
   });
 }
 
