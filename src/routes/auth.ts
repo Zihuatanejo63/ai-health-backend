@@ -121,7 +121,7 @@ export async function handleRequestLink(request: Request, env: Env): Promise<Res
   // Check if email exists in users table (for user-friendliness, but don't reveal)
   const existingUser = await env.DB.prepare(
     "SELECT id FROM users WHERE email = ?"
-  ).bind(email).first<{ id: string }>();
+  ).bind(email).first<{ id: number }>();
 
   // Generate token and store hash only
   const token = crypto.randomUUID();
@@ -201,17 +201,21 @@ export async function handleVerify(request: Request, env: Env): Promise<Response
 
   // Find or create user
   let user = await env.DB.prepare("SELECT id, email, display_name as name FROM users WHERE email = ?")
-    .bind(row.email).first<{ id: string; email: string; name: string }>();
+    .bind(row.email).first<{ id: number; email: string; name: string }>();
 
   if (!user) {
-    const userId = crypto.randomUUID();
     await env.DB.prepare(
-      "INSERT INTO users (id, email, display_name, preferred_language, created_at) VALUES (?, ?, ?, 'English', ?)"
-    ).bind(userId, row.email, row.email, new Date().toISOString()).run();
-    user = { id: userId, email: row.email, name: row.email };
+      "INSERT INTO users (email, display_name, preferred_language) VALUES (?, ?, 'English')"
+    ).bind(row.email, row.email).run();
+    user = await env.DB.prepare("SELECT id, email, display_name as name FROM users WHERE email = ?")
+      .bind(row.email).first<{ id: number; email: string; name: string }>();
   }
 
-  const { cookie } = await createSession(env.DB, user.id);
+  if (!user) {
+    throw new AppError(500, "user_creation_failed", "Could not create or find user.");
+  }
+
+  const { cookie } = await createSession(env.DB, String(user.id));
 
   const appUrl = getAppUrl(env);
   return new Response(null, {
@@ -320,7 +324,7 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
 
   // Check if user already exists
   const existing = await env.DB.prepare("SELECT id FROM users WHERE email = ?")
-    .bind(email).first<{ id: string }>();
+    .bind(email).first<{ id: number }>();
 
   if (existing) {
     return jsonResponse({
@@ -331,13 +335,11 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
   }
 
   const passwordHash = await hashPassword(password);
-  const userId = crypto.randomUUID();
-  const now = new Date().toISOString();
 
   try {
     await env.DB.prepare(
-      "INSERT INTO users (id, email, display_name, preferred_language, password_hash, created_at) VALUES (?, ?, ?, 'English', ?, ?)"
-    ).bind(userId, email, displayName, passwordHash, now).run();
+      "INSERT INTO users (email, display_name, preferred_language, password_hash) VALUES (?, ?, 'English', ?)"
+    ).bind(email, displayName, passwordHash).run();
   } catch (error) {
     return jsonResponse({
       ok: false,
@@ -346,11 +348,24 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
     }, 500);
   }
 
-  const { cookie } = await createSession(env.DB, userId);
+  // Retrieve the auto-generated id
+  const user = await env.DB.prepare(
+    "SELECT id, email, display_name as name FROM users WHERE email = ?"
+  ).bind(email).first<{ id: number; email: string; name: string }>();
+
+  if (!user) {
+    return jsonResponse({
+      ok: false,
+      code: "D1_INSERT_FAILED",
+      message: "Account created but could not retrieve user record.",
+    }, 500);
+  }
+
+  const { cookie } = await createSession(env.DB, String(user.id));
 
   return jsonResponse({
     ok: true,
-    user: { id: userId, email, name: displayName },
+    user: { id: user.id, email: user.email, name: user.name },
     message: "Account created successfully.",
   }, 201, { "Set-Cookie": cookie });
 }
@@ -380,7 +395,7 @@ export async function handleLogin(request: Request, env: Env): Promise<Response>
 
   const user = await env.DB.prepare(
     "SELECT id, email, display_name, password_hash FROM users WHERE email = ?"
-  ).bind(email).first<{ id: string; email: string; display_name: string; password_hash: string | null }>();
+  ).bind(email).first<{ id: number; email: string; display_name: string; password_hash: string | null }>();
 
   if (!user || !user.password_hash) {
     throw new AppError(401, "invalid_credentials", "Invalid email or password. If you haven't created an account yet, please sign up.");
@@ -391,7 +406,7 @@ export async function handleLogin(request: Request, env: Env): Promise<Response>
     throw new AppError(401, "invalid_credentials", "Invalid email or password.");
   }
 
-  const { cookie } = await createSession(env.DB, user.id);
+  const { cookie } = await createSession(env.DB, String(user.id));
 
   return jsonResponse({
     ok: true,

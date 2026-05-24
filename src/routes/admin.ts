@@ -111,24 +111,25 @@ export async function handleAdminUserLookup(request: Request, env: Env): Promise
   const user = await db.prepare(
     "SELECT id, email, display_name as name, 'user' as role, created_at FROM users WHERE email = ? OR id = ? LIMIT 1"
   ).bind(identifier, identifier).first<{
-    id: string; email: string; name: string; role: string; created_at: string;
+    id: number; email: string; name: string; role: string; created_at: string;
   }>();
 
   if (!user) throw notFound("User not found.");
 
+  const userId = String(user.id);
   const [entitlements, checkoutSessions, paymentEvents, symptomCheckCount] = await Promise.all([
     db.prepare(
       "SELECT plan, status, provider, creem_checkout_id, creem_subscription_id, current_period_end, created_at, updated_at FROM entitlements WHERE user_id = ? ORDER BY created_at DESC"
-    ).bind(user.id).all(),
+    ).bind(userId).all(),
     db.prepare(
       "SELECT id, plan, status, created_at FROM checkout_sessions WHERE user_id = ? ORDER BY created_at DESC LIMIT 10"
-    ).bind(user.id).all(),
+    ).bind(userId).all(),
     db.prepare(
       "SELECT event_type, created_at FROM payment_events WHERE payload LIKE ? ORDER BY created_at DESC LIMIT 10"
-    ).bind(`%${user.id}%`).all(),
+    ).bind(`%${userId}%`).all(),
     db.prepare(
       "SELECT COUNT(*) AS count FROM symptom_checks WHERE user_id = ?"
-    ).bind(user.id).first<{ count: number }>(),
+    ).bind(userId).first<{ count: number }>(),
   ]);
 
   await writeAuditLog(db, actorId, "admin.user.lookup", "user", user.id, { lookupBy: identifier.includes("@") ? "email" : "userId" });
