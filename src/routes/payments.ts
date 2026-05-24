@@ -6,7 +6,7 @@ import type { D1Database } from "@cloudflare/workers-types";
 import { requireSession } from "../lib/session";
 import { AppError, jsonResponse, badRequest } from "../lib/errors";
 import { logError, getClientHash } from "../lib/logger";
-import type { CreateCheckoutRequest, CreateCheckoutResponse } from "../types";
+import type { CreateCheckoutRequest } from "../types";
 
 interface Env {
   DB?: D1Database;
@@ -22,13 +22,6 @@ const SUPPORTED_PLANS = ["plus_monthly"] as const;
 function requireDb(env: Env): D1Database {
   if (!env.DB) throw new AppError(500, "db_unavailable", "Database is not configured.");
   return env.DB;
-}
-
-function getProductId(plan: string, env: Env): string {
-  switch (plan) {
-    case "plus_monthly": return env.CREEM_PLUS_MONTHLY_PRODUCT_ID || "";
-    default: return "";
-  }
 }
 
 // ---- Create Checkout ----
@@ -48,20 +41,25 @@ export async function handleCreateCheckout(request: Request, env: Env): Promise<
   }
 
   if (!body.plan || !SUPPORTED_PLANS.includes(body.plan)) {
-    throw new AppError(400, "unsupported_plan", "Unsupported plan.");
+    throw new AppError(400, "UNSUPPORTED_PLAN", "Unsupported plan.");
   }
 
   // All paid plans require login so webhooks can bind entitlements to a user
   const session = await requireSession(db, request.headers.get("Cookie"));
 
   if (!env.CREEM_API_KEY) {
-    throw new AppError(500, "config_error", "Payment provider is not configured.");
+    throw new AppError(500, "CREEM_API_KEY_NOT_CONFIGURED", "Creem API key is not configured.");
   }
 
-  const productId = getProductId(body.plan, env);
-  if (!productId) {
-    throw new AppError(500, "config_error", `No product configured for plan: ${body.plan}`);
+  const plusMonthlyProductId = env.CREEM_PLUS_MONTHLY_PRODUCT_ID || "";
+  if (!plusMonthlyProductId) {
+    throw new AppError(500, "CREEM_PRODUCT_NOT_CONFIGURED", "Creem Plus monthly product is not configured.");
   }
+
+  console.log("[creem] create checkout", {
+    planId: body.plan,
+    productId: plusMonthlyProductId,
+  });
 
   const creemBaseUrl = (env.CREEM_API_BASE_URL || "https://api.creem.io").replace(/\/$/, "");
   const appUrl = (env.FRONTEND_BASE_URL || "https://healthmatchai.com").replace(/\/$/, "");
@@ -74,7 +72,7 @@ export async function handleCreateCheckout(request: Request, env: Env): Promise<
       "x-api-key": env.CREEM_API_KEY,
     },
     body: JSON.stringify({
-      product_id: productId,
+      product_id: plusMonthlyProductId,
       request_id: requestId,
       success_url: `${appUrl}/payment-success?plan=${encodeURIComponent(body.plan)}`,
       metadata: {
@@ -125,12 +123,10 @@ export async function handleCreateCheckout(request: Request, env: Env): Promise<
      VALUES (?, ?, ?, 'creem', ?, 'pending', ?, ?)`
   ).bind(checkoutSessionId, session.user.id, body.plan, data.id || requestId, new Date().toISOString(), new Date().toISOString()).run();
 
-  const response: CreateCheckoutResponse = {
+  return jsonResponse({
+    ok: true,
     checkoutUrl,
-    checkoutSessionId: data.id || requestId,
-  };
-
-  return jsonResponse(response);
+  });
 }
 
 // ---- Creem Webhook ----

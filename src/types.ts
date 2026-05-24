@@ -69,11 +69,6 @@ export interface CreateCheckoutRequest {
   plan: "plus_monthly";
 }
 
-export interface CreateCheckoutResponse {
-  checkoutUrl: string;
-  checkoutSessionId: string;
-}
-
 export interface UserResponse {
   user: {
     id: string;
