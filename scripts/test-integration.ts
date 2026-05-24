@@ -189,20 +189,17 @@ async function main() {
   // ============================================================
   console.log("\n--- POST /api/create-checkout-session ---");
 
-  // 5a. No session cookie — requires DB mock for full test
-  // Note: requireDb() fires before requireSession(), so without DB mock returns 500
+  // 5a. No DB — returns structured JSON error
   {
     const { handleCreateCheckout } = await import("../src/routes/payments");
     const req = mockRequest("POST", "/api/create-checkout-session", {
       body: { plan: "one_time_report" },
     });
-    try {
-      await handleCreateCheckout(req, mockEnv({ DB: undefined }) as Parameters<typeof handleCreateCheckout>[1]);
-      assert(false, "No DB: should throw");
-    } catch (err: unknown) {
-      const e = err as { status?: number };
-      assertEq(e.status, 500, "Checkout no DB: returns 500 (requireDb before auth)");
-    }
+    const res = await handleCreateCheckout(req, mockEnv({ DB: undefined }) as Parameters<typeof handleCreateCheckout>[1]);
+    assertEq(res.status, 500, "Checkout no DB: returns 500");
+    const data = (await res.json()) as { ok?: boolean; code?: string; message?: string };
+    assert(data.ok === false, "Checkout no DB: ok is false");
+    assert(typeof data.message === "string" && data.message.length > 0, "Checkout no DB: has message");
   }
 
   // 5b. Invalid plan (before auth, but DB check comes first)
@@ -211,13 +208,11 @@ async function main() {
     const req = mockRequest("POST", "/api/create-checkout-session", {
       body: { plan: "invalid_plan" },
     });
-    try {
-      await handleCreateCheckout(req, mockEnv({ DB: undefined }) as Parameters<typeof handleCreateCheckout>[1]);
-      assert(false, "No DB: should throw");
-    } catch (err: unknown) {
-      const e = err as { status?: number };
-      assertEq(e.status, 500, "Invalid plan no DB: returns 500 (requireDb before validation)");
-    }
+    const res = await handleCreateCheckout(req, mockEnv({ DB: undefined }) as Parameters<typeof handleCreateCheckout>[1]);
+    assertEq(res.status, 500, "Invalid plan no DB: returns 500");
+    const data = (await res.json()) as { ok?: boolean; code?: string; message?: string };
+    assert(data.ok === false, "Invalid plan no DB: ok is false");
+    assert(typeof data.message === "string" && data.message.length > 0, "Invalid plan no DB: has message");
   }
 
   // ============================================================

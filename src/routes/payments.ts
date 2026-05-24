@@ -27,131 +27,145 @@ function requireDb(env: Env): D1Database {
 // ---- Create Checkout ----
 
 export async function handleCreateCheckout(request: Request, env: Env): Promise<Response> {
-  if (request.method !== "POST") {
-    throw new AppError(405, "method_not_allowed", "Use POST for this endpoint.");
-  }
-
-  const db = requireDb(env);
-
-  let body: CreateCheckoutRequest;
   try {
-    body = (await request.json()) as CreateCheckoutRequest;
-  } catch {
-    throw badRequest("Request body must be valid JSON.");
-  }
+    if (request.method !== "POST") {
+      return jsonResponse({ ok: false, code: "method_not_allowed", message: "Use POST for this endpoint." }, 405);
+    }
 
-  if (!body.plan || !SUPPORTED_PLANS.includes(body.plan)) {
-    throw new AppError(400, "UNSUPPORTED_PLAN", "Unsupported plan.");
-  }
+    const db = requireDb(env);
 
-  // All paid plans require login so webhooks can bind entitlements to a user
-  const session = await requireSession(db, request.headers.get("Cookie"));
+    let body: CreateCheckoutRequest;
+    try {
+      body = (await request.json()) as CreateCheckoutRequest;
+    } catch {
+      return jsonResponse({ ok: false, code: "bad_request", message: "Request body must be valid JSON." }, 400);
+    }
 
-  if (!env.CREEM_API_KEY) {
-    throw new AppError(500, "CREEM_API_KEY_NOT_CONFIGURED", "Creem API key is not configured.");
-  }
+    if (!body.plan || !SUPPORTED_PLANS.includes(body.plan)) {
+      return jsonResponse({ ok: false, code: "UNSUPPORTED_PLAN", message: "Unsupported plan." }, 400);
+    }
 
-  const plusMonthlyProductId = env.CREEM_PLUS_MONTHLY_PRODUCT_ID || "";
-  if (!plusMonthlyProductId) {
-    throw new AppError(500, "CREEM_PRODUCT_NOT_CONFIGURED", "Creem Plus monthly product is not configured.");
-  }
+    // All paid plans require login so webhooks can bind entitlements to a user
+    const session = await requireSession(db, request.headers.get("Cookie"));
 
-  console.log("[creem] create checkout", {
-    planId: body.plan,
-    productId: plusMonthlyProductId,
-  });
+    if (!env.CREEM_API_KEY) {
+      return jsonResponse({ ok: false, code: "CREEM_API_KEY_NOT_CONFIGURED", message: "Creem API key is not configured." }, 500);
+    }
 
-  const creemBaseUrl = (env.CREEM_API_BASE_URL || "https://api.creem.io").replace(/\/$/, "");
-  const appUrl = (env.FRONTEND_BASE_URL || "https://healthmatchai.com").replace(/\/$/, "");
-  const requestId = `hm_${body.plan}_${crypto.randomUUID()}`;
+    const plusMonthlyProductId = env.CREEM_PLUS_MONTHLY_PRODUCT_ID || "";
+    if (!plusMonthlyProductId) {
+      return jsonResponse({ ok: false, code: "CREEM_PRODUCT_NOT_CONFIGURED", message: "Creem Plus monthly product is not configured." }, 500);
+    }
 
-  const creemResponse = await fetch(`${creemBaseUrl}/v1/checkouts`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": env.CREEM_API_KEY,
-    },
-    body: JSON.stringify({
-      product_id: plusMonthlyProductId,
-      request_id: requestId,
-      success_url: `${appUrl}/payment-success?plan=${encodeURIComponent(body.plan)}`,
-      metadata: {
-        plan: body.plan,
-        userId: session?.user.id || "",
-        userEmail: session?.user.email || "",
-      },
-    }),
-  });
-
-  const creemResponseText = await creemResponse.text().catch(() => "");
-  let creemData: Record<string, unknown> = {};
-  try { creemData = JSON.parse(creemResponseText) as Record<string, unknown>; } catch { /* not JSON */ }
-
-  if (!creemResponse.ok) {
-    console.log("[creem] checkout failed", {
+    console.log("[creem] create checkout", {
       planId: body.plan,
-      productIdConfigured: !!plusMonthlyProductId,
-      apiKeyConfigured: !!env.CREEM_API_KEY,
-      creemStatus: creemResponse.status,
-      creemResponse: creemResponseText,
+      productId: plusMonthlyProductId,
     });
 
-    if (env.DB) {
-      await logError(env.DB, {
-        eventType: "checkout_create_failed",
-        route: "/api/create-checkout-session",
-        method: "POST",
-        status: creemResponse.status,
-        clientHash: await getClientHash(request),
-        message: String(creemData.error || creemData.message || `Creem API returned ${creemResponse.status}`),
+    const creemBaseUrl = (env.CREEM_API_BASE_URL || "https://api.creem.io").replace(/\/$/, "");
+    const appUrl = (env.FRONTEND_BASE_URL || "https://healthmatchai.com").replace(/\/$/, "");
+    const requestId = `hm_${body.plan}_${crypto.randomUUID()}`;
+
+    const creemResponse = await fetch(`${creemBaseUrl}/v1/checkouts`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": env.CREEM_API_KEY,
+      },
+      body: JSON.stringify({
+        product_id: plusMonthlyProductId,
+        request_id: requestId,
+        success_url: `${appUrl}/payment-success?plan=${encodeURIComponent(body.plan)}`,
+        metadata: {
+          plan: body.plan,
+          userId: session?.user.id || "",
+          userEmail: session?.user.email || "",
+        },
+      }),
+    });
+
+    const creemResponseText = await creemResponse.text().catch(() => "");
+    let creemData: Record<string, unknown> = {};
+    try { creemData = JSON.parse(creemResponseText) as Record<string, unknown>; } catch { /* not JSON */ }
+
+    if (!creemResponse.ok) {
+      console.log("[creem] checkout failed", {
+        planId: body.plan,
+        productIdConfigured: !!plusMonthlyProductId,
+        apiKeyConfigured: !!env.CREEM_API_KEY,
+        creemStatus: creemResponse.status,
+        creemResponse: creemResponseText,
       });
+
+      if (env.DB) {
+        await logError(env.DB, {
+          eventType: "checkout_create_failed",
+          route: "/api/create-checkout-session",
+          method: "POST",
+          status: creemResponse.status,
+          clientHash: await getClientHash(request),
+          message: String(creemData.error || creemData.message || `Creem API returned ${creemResponse.status}`),
+        });
+      }
+
+      let message = `Creem returned ${creemResponse.status}.`;
+      const lower = creemResponseText.toLowerCase();
+      if (creemResponse.status === 401 || creemResponse.status === 403) {
+        message = "Creem API key or account review is not ready.";
+      } else if (lower.includes("account") || lower.includes("store") || lower.includes("merchant") ||
+                 lower.includes("onboarding") || lower.includes("verification") || lower.includes("review") ||
+                 lower.includes("not approved")) {
+        message = "Creem account review is not completed yet.";
+      }
+
+      return jsonResponse({
+        ok: false,
+        code: "CREEM_CHECKOUT_FAILED",
+        message,
+        creemStatus: creemResponse.status,
+        creemResponse: creemResponseText,
+      }, 500);
     }
 
-    let message = `Creem returned ${creemResponse.status}.`;
-    const lower = creemResponseText.toLowerCase();
-    if (creemResponse.status === 401 || creemResponse.status === 403) {
-      message = "Creem API key or account review is not ready.";
-    } else if (lower.includes("account") || lower.includes("store") || lower.includes("merchant") ||
-               lower.includes("onboarding") || lower.includes("verification") || lower.includes("review") ||
-               lower.includes("not approved")) {
-      message = "Creem account review is not completed yet.";
+    const checkoutUrl = (creemData.checkout_url || creemData.checkoutUrl || creemData.url) as string | undefined;
+    if (!checkoutUrl) {
+      if (env.DB) {
+        await logError(env.DB, {
+          eventType: "checkout_create_failed",
+          route: "/api/create-checkout-session",
+          method: "POST",
+          status: 502,
+          clientHash: await getClientHash(request),
+          message: "Missing checkout URL from Creem response",
+        });
+      }
+      return jsonResponse({ ok: false, code: "checkout_error", message: "Missing checkout URL from payment provider." }, 502);
     }
+
+    // Track checkout session
+    const checkoutSessionId = crypto.randomUUID();
+    await db.prepare(
+      `INSERT INTO checkout_sessions (id, user_id, plan, provider, provider_checkout_id, status, created_at, updated_at)
+       VALUES (?, ?, ?, 'creem', ?, 'pending', ?, ?)`
+    ).bind(checkoutSessionId, session.user.id, body.plan, (creemData.id as string) || requestId, new Date().toISOString(), new Date().toISOString()).run();
 
     return jsonResponse({
+      ok: true,
+      checkoutUrl,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const stack = error instanceof Error ? error.stack : undefined;
+    const code = error instanceof AppError ? error.code : "CHECKOUT_FAILED";
+    const status = error instanceof AppError ? error.status : 500;
+    console.error("[creem] checkout unhandled error", { message, stack });
+    return jsonResponse({
       ok: false,
-      code: "CREEM_CHECKOUT_FAILED",
+      code,
       message,
-      creemStatus: creemResponse.status,
-      creemResponse: creemResponseText,
-    }, creemResponse.status >= 500 ? 502 : 400);
+      stack,
+    }, status);
   }
-
-  const checkoutUrl = (creemData.checkout_url || creemData.checkoutUrl || creemData.url) as string | undefined;
-  if (!checkoutUrl) {
-    if (env.DB) {
-      await logError(env.DB, {
-        eventType: "checkout_create_failed",
-        route: "/api/create-checkout-session",
-        method: "POST",
-        status: 502,
-        clientHash: await getClientHash(request),
-        message: "Missing checkout URL from Creem response",
-      });
-    }
-    throw new AppError(502, "checkout_error", "Missing checkout URL from payment provider.");
-  }
-
-  // Track checkout session
-  const checkoutSessionId = crypto.randomUUID();
-  await db.prepare(
-    `INSERT INTO checkout_sessions (id, user_id, plan, provider, provider_checkout_id, status, created_at, updated_at)
-     VALUES (?, ?, ?, 'creem', ?, 'pending', ?, ?)`
-  ).bind(checkoutSessionId, session.user.id, body.plan, (creemData.id as string) || requestId, new Date().toISOString(), new Date().toISOString()).run();
-
-  return jsonResponse({
-    ok: true,
-    checkoutUrl,
-  });
 }
 
 // ---- Creem Webhook ----
