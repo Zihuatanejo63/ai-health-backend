@@ -2,6 +2,8 @@
 
 Cloudflare Worker backend for HealthMatchAI.
 
+> Trigger backend redeploy after D1 password_hash migration.
+
 ## Run locally
 
 ```bash
