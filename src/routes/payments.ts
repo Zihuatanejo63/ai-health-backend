@@ -83,11 +83,19 @@ export async function handleCreateCheckout(request: Request, env: Env): Promise<
     }),
   });
 
-  const data = (await creemResponse.json().catch(() => ({}))) as {
-    id?: string; checkout_url?: string; checkoutUrl?: string; url?: string; error?: string;
-  };
+  const creemResponseText = await creemResponse.text().catch(() => "");
+  let creemData: Record<string, unknown> = {};
+  try { creemData = JSON.parse(creemResponseText) as Record<string, unknown>; } catch { /* not JSON */ }
 
   if (!creemResponse.ok) {
+    console.log("[creem] checkout failed", {
+      planId: body.plan,
+      productIdConfigured: !!plusMonthlyProductId,
+      apiKeyConfigured: !!env.CREEM_API_KEY,
+      creemStatus: creemResponse.status,
+      creemResponse: creemResponseText,
+    });
+
     if (env.DB) {
       await logError(env.DB, {
         eventType: "checkout_create_failed",
@@ -95,13 +103,30 @@ export async function handleCreateCheckout(request: Request, env: Env): Promise<
         method: "POST",
         status: creemResponse.status,
         clientHash: await getClientHash(request),
-        message: data.error || `Creem API returned ${creemResponse.status}`,
+        message: String(creemData.error || creemData.message || `Creem API returned ${creemResponse.status}`),
       });
     }
-    throw new AppError(502, "checkout_error", data.error || "Checkout creation failed.");
+
+    let message = `Creem returned ${creemResponse.status}.`;
+    const lower = creemResponseText.toLowerCase();
+    if (creemResponse.status === 401 || creemResponse.status === 403) {
+      message = "Creem API key or account review is not ready.";
+    } else if (lower.includes("account") || lower.includes("store") || lower.includes("merchant") ||
+               lower.includes("onboarding") || lower.includes("verification") || lower.includes("review") ||
+               lower.includes("not approved")) {
+      message = "Creem account review is not completed yet.";
+    }
+
+    return jsonResponse({
+      ok: false,
+      code: "CREEM_CHECKOUT_FAILED",
+      message,
+      creemStatus: creemResponse.status,
+      creemResponse: creemResponseText,
+    }, creemResponse.status >= 500 ? 502 : 400);
   }
 
-  const checkoutUrl = data.checkout_url || data.checkoutUrl || data.url;
+  const checkoutUrl = (creemData.checkout_url || creemData.checkoutUrl || creemData.url) as string | undefined;
   if (!checkoutUrl) {
     if (env.DB) {
       await logError(env.DB, {
@@ -121,7 +146,7 @@ export async function handleCreateCheckout(request: Request, env: Env): Promise<
   await db.prepare(
     `INSERT INTO checkout_sessions (id, user_id, plan, provider, provider_checkout_id, status, created_at, updated_at)
      VALUES (?, ?, ?, 'creem', ?, 'pending', ?, ?)`
-  ).bind(checkoutSessionId, session.user.id, body.plan, data.id || requestId, new Date().toISOString(), new Date().toISOString()).run();
+  ).bind(checkoutSessionId, session.user.id, body.plan, (creemData.id as string) || requestId, new Date().toISOString(), new Date().toISOString()).run();
 
   return jsonResponse({
     ok: true,
