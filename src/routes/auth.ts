@@ -398,19 +398,27 @@ export async function handleLogin(request: Request, env: Env): Promise<Response>
   ).bind(email).first<{ id: number; email: string; display_name: string; password_hash: string | null }>();
 
   if (!user || !user.password_hash) {
-    throw new AppError(401, "invalid_credentials", "Invalid email or password. If you haven't created an account yet, please sign up.");
+    return jsonResponse({
+      ok: false,
+      code: "INVALID_CREDENTIALS",
+      message: "Invalid email or password.",
+    }, 401);
   }
 
   const valid = await verifyPassword(password, user.password_hash);
   if (!valid) {
-    throw new AppError(401, "invalid_credentials", "Invalid email or password.");
+    return jsonResponse({
+      ok: false,
+      code: "INVALID_CREDENTIALS",
+      message: "Invalid email or password.",
+    }, 401);
   }
 
   const { cookie } = await createSession(env.DB, user.id);
 
   return jsonResponse({
     ok: true,
-    user: { id: user.id, email: user.email, name: user.display_name },
+    user: { id: user.id, email: user.email, name: user.display_name || user.email },
     message: "Logged in successfully.",
   }, 200, { "Set-Cookie": cookie });
 }

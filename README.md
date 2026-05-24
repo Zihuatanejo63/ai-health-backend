@@ -49,7 +49,6 @@ The Worker stores each successful AI triage request and checkout-created order r
   - `migrations/0009_error_logging.sql`
   - `migrations/0010_audit_logs.sql`
   - `migrations/0011_password_auth.sql`
-  - `migrations/0012_sessions.sql`
 
 For privacy minimization, the Worker no longer stores full symptom text in D1. It stores the case reference, severity, duration, selected output language, doctor-ready summary, care level guidance, monitoring points, and a redacted symptom-length marker.
 

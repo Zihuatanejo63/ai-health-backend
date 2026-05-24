@@ -1,7 +1,7 @@
 /**
  * Server-side session management.
- * Sessions are stored in D1 with the plaintext session token.
- * The session token is set as an HttpOnly cookie.
+ * Sessions are stored in D1 with the hash of the session token.
+ * The plaintext session token is set as an HttpOnly cookie.
  */
 
 import type { D1Database } from "@cloudflare/workers-types";
@@ -25,6 +25,13 @@ function generateToken(): string {
   return crypto.randomUUID();
 }
 
+async function hashToken(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 export function sessionCookie(token: string, maxAge = SESSION_MAX_AGE_SECONDS): string {
   return `${SESSION_COOKIE}=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}`;
 }
@@ -38,14 +45,15 @@ export async function createSession(
   userId: number
 ): Promise<{ token: string; cookie: string }> {
   const token = generateToken();
+  const sessionHash = await hashToken(token);
   const sessionId = crypto.randomUUID();
   const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000).toISOString();
 
   await db
     .prepare(
-      "INSERT INTO sessions (id, user_id, token, expires_at, created_at) VALUES (?, ?, ?, ?, ?)"
+      "INSERT INTO sessions (id, user_id, session_hash, expires_at) VALUES (?, ?, ?, ?)"
     )
-    .bind(sessionId, userId, token, expiresAt, new Date().toISOString())
+    .bind(sessionId, userId, sessionHash, expiresAt)
     .run();
 
   return { token, cookie: sessionCookie(token) };
@@ -60,14 +68,16 @@ export async function verifyAndGetSession(
   const token = extractCookie(cookieHeader, SESSION_COOKIE);
   if (!token) return null;
 
+  const sessionHash = await hashToken(token);
+
   const row = await db
     .prepare(
       `SELECT s.id, s.user_id, s.expires_at, u.email, u.display_name as name
        FROM sessions s
        JOIN users u ON u.id = s.user_id
-       WHERE s.token = ? AND s.expires_at > ?`
+       WHERE s.session_hash = ? AND s.expires_at > ?`
     )
-    .bind(token, new Date().toISOString())
+    .bind(sessionHash, new Date().toISOString())
     .first<{
       id: string;
       user_id: number;
@@ -97,7 +107,8 @@ export async function destroySession(
 
   const token = extractCookie(cookieHeader, SESSION_COOKIE);
   if (token) {
-    await db.prepare("DELETE FROM sessions WHERE token = ?").bind(token).run();
+    const sessionHash = await hashToken(token);
+    await db.prepare("DELETE FROM sessions WHERE session_hash = ?").bind(sessionHash).run();
   }
 
   // Also clean up expired sessions
