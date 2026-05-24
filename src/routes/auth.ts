@@ -215,7 +215,7 @@ export async function handleVerify(request: Request, env: Env): Promise<Response
     throw new AppError(500, "user_creation_failed", "Could not create or find user.");
   }
 
-  const { cookie } = await createSession(env.DB, String(user.id));
+  const { cookie } = await createSession(env.DB, user.id);
 
   const appUrl = getAppUrl(env);
   return new Response(null, {
@@ -361,7 +361,7 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
     }, 500);
   }
 
-  const { cookie } = await createSession(env.DB, String(user.id));
+  const { cookie } = await createSession(env.DB, user.id);
 
   return jsonResponse({
     ok: true,
@@ -406,7 +406,7 @@ export async function handleLogin(request: Request, env: Env): Promise<Response>
     throw new AppError(401, "invalid_credentials", "Invalid email or password.");
   }
 
-  const { cookie } = await createSession(env.DB, String(user.id));
+  const { cookie } = await createSession(env.DB, user.id);
 
   return jsonResponse({
     ok: true,
