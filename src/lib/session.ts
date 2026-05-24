@@ -92,7 +92,7 @@ export async function verifyAndGetSession(
     user: {
       id: String(row.user_id),
       email: row.email || "",
-      name: row.name || row.email || "",
+      name: row.name || row.email.split("@")[0] || "",
       role: "user",
     },
     sessionId: row.id,

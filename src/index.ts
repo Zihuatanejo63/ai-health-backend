@@ -11,7 +11,7 @@
  */
 
 import { errorResponse } from "./lib/errors";
-import { handleRequestLink, handleVerify, handleLogout, handleMe, handleRegister, handleLogin } from "./routes/auth";
+import { handleRequestLink, handleVerify, handleLogout, handleMe, handleRegister, handleLogin, handleUpdateProfile } from "./routes/auth";
 import { handleTriage } from "./routes/triage";
 import {
   handleGetSymptomChecks,
@@ -109,6 +109,9 @@ export default {
         return withCors(await handleLogin(request, env), request, env);
       }
       if (url.pathname === "/api/me") {
+        if (request.method === "PATCH") {
+          return withCors(await handleUpdateProfile(request, env), request, env);
+        }
         return withCors(await handleMe(request, env), request, env);
       }
 

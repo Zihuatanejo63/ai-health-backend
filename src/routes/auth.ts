@@ -5,7 +5,7 @@
  */
 
 import type { D1Database } from "@cloudflare/workers-types";
-import { createSession, destroySession, verifyAndGetSession } from "../lib/session";
+import { createSession, destroySession, verifyAndGetSession, requireSession } from "../lib/session";
 import { sendMagicLink } from "../lib/email";
 import { AppError, jsonResponse, badRequest, notFound, tooManyRequests } from "../lib/errors";
 import { logError, getClientHash } from "../lib/logger";
@@ -206,7 +206,7 @@ export async function handleVerify(request: Request, env: Env): Promise<Response
   if (!user) {
     await env.DB.prepare(
       "INSERT INTO users (email, display_name, preferred_language) VALUES (?, ?, 'English')"
-    ).bind(row.email, row.email).run();
+    ).bind(row.email, row.email.split("@")[0]).run();
     user = await env.DB.prepare("SELECT id, email, display_name as name FROM users WHERE email = ?")
       .bind(row.email).first<{ id: number; email: string; name: string }>();
   }
@@ -271,6 +271,48 @@ export async function handleMe(request: Request, env: Env): Promise<Response> {
   });
 }
 
+// ---- Profile Update ----
+
+export async function handleUpdateProfile(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "PATCH") {
+    throw new AppError(405, "method_not_allowed", "Use PATCH for this endpoint.");
+  }
+
+  if (!env.DB) {
+    throw new AppError(500, "db_unavailable", "Database is not configured.");
+  }
+
+  const session = await requireSession(env.DB, request.headers.get("Cookie"));
+
+  let body: { name?: string };
+  try {
+    body = (await request.json()) as { name?: string };
+  } catch {
+    throw badRequest("Request body must be valid JSON.");
+  }
+
+  const displayName = (body.name || "").trim();
+  if (!displayName) {
+    throw badRequest("Display name cannot be empty.");
+  }
+  if (displayName.length > 100) {
+    throw badRequest("Display name must be 100 characters or fewer.");
+  }
+
+  await env.DB.prepare(
+    "UPDATE users SET display_name = ? WHERE id = ?"
+  ).bind(displayName, session.user.id).run();
+
+  return jsonResponse({
+    ok: true,
+    user: {
+      id: session.user.id,
+      email: session.user.email,
+      name: displayName,
+    },
+  });
+}
+
 // ---- Email + Password Auth ----
 
 async function hashPassword(password: string): Promise<string> {
@@ -310,7 +352,8 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
 
   const email = (body.email || "").trim().toLowerCase();
   const password = (body.password || "").trim();
-  const displayName = (body.name || email).trim();
+  const rawName = (body.name || "").trim();
+  const displayName = rawName || email.split("@")[0];
 
   if (!email || !email.includes("@") || email.length > 254) {
     throw badRequest("Please enter a valid email address.");
@@ -423,7 +466,7 @@ export async function handleLogin(request: Request, env: Env): Promise<Response>
 
   return jsonResponse({
     ok: true,
-    user: { id: user.id, email: user.email, name: user.display_name || user.email },
+    user: { id: user.id, email: user.email, name: user.display_name || user.email.split("@")[0] },
     message: "Logged in successfully.",
   }, 200, { "Set-Cookie": cookie });
 }
