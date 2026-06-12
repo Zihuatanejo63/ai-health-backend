@@ -2,12 +2,9 @@
 -- The existing users table has: id INTEGER PK, email TEXT, display_name TEXT, preferred_language TEXT, created_at TEXT
 -- Add missing columns for session-based auth
 
--- SQLite doesn't support ADD COLUMN IF NOT EXISTS, so we check manually or use ALTER TABLE
--- These may fail if columns already exist (idempotent for fresh deploys; safe for D1 apply)
-
-ALTER TABLE users ADD COLUMN name TEXT;
-ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user';
-ALTER TABLE users ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP;
+-- users ALTERs removed: code reads display_name (already present) and never
+-- queries users.name/role/updated_at; CURRENT_TIMESTAMP defaults also cannot
+-- be added via ALTER in SQLite.
 
 -- Sessions table: server-side session management
 CREATE TABLE IF NOT EXISTS sessions (
@@ -32,23 +29,8 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_auth_tokens_email_purpose ON auth_tokens(email, purpose);
 
--- Entitlements: server-side subscription/entitlement state
-CREATE TABLE IF NOT EXISTS entitlements (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  plan TEXT NOT NULL,
-  status TEXT NOT NULL,
-  provider TEXT DEFAULT 'creem',
-  creem_customer_id TEXT,
-  creem_checkout_id TEXT,
-  creem_subscription_id TEXT,
-  current_period_end TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(user_id, plan)
-);
-CREATE INDEX IF NOT EXISTS idx_entitlements_user_id ON entitlements(user_id);
-CREATE INDEX IF NOT EXISTS idx_entitlements_creem_subscription ON entitlements(creem_subscription_id);
+-- Entitlements: superseded by 0013_entitlements.sql (provider-neutral column names
+-- matching the code). Defined there to avoid creating a conflicting schema here.
 
 -- Payment events: idempotent webhook processing
 CREATE TABLE IF NOT EXISTS payment_events (

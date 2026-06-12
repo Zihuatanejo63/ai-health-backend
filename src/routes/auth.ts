@@ -65,6 +65,15 @@ export async function handleRequestLink(request: Request, env: Env): Promise<Res
     throw new AppError(500, "db_unavailable", "Database is not configured.");
   }
 
+  // Without an email provider configured, magic links can never reach the user.
+  // Point them to email+password instead of pretending a link was sent.
+  if (!env.EMAIL_API_KEY) {
+    return jsonResponse({
+      ok: true,
+      message: "Sign-in link is not available right now. Please use email and password to log in or create an account.",
+    });
+  }
+
   // Rate limit: same email
   const emailHash = await hashValue(`email:${email}`);
   const emailWindow = Math.floor(Date.now() / 1000 / EMAIL_RATE_LIMIT_SECONDS) * EMAIL_RATE_LIMIT_SECONDS;

@@ -62,7 +62,8 @@ export interface TriageApiResponse {
   coverageQuestions: string[];
   disclaimer: string;
   referenceId: string;
-  aiGenerated: boolean;
+  aiGenerated?: boolean;
+  aiReviewStatus: "generated" | "fallback" | "unavailable";
 }
 
 export interface CreateCheckoutRequest {

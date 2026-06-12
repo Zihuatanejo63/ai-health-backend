@@ -122,8 +122,6 @@ export async function handleCreateCheckout(request: Request, env: Env): Promise<
         ok: false,
         code: "CREEM_CHECKOUT_FAILED",
         message,
-        creemStatus: creemResponse.status,
-        creemResponse: creemResponseText,
       }, 500);
     }
 
@@ -167,17 +165,33 @@ export async function handleCreateCheckout(request: Request, env: Env): Promise<
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const stack = error instanceof Error ? error.stack : undefined;
-    const code = error instanceof AppError ? error.code : "CHECKOUT_FAILED";
-    const status = error instanceof AppError ? error.status : 500;
-    console.error("[creem] checkout unhandled error", { message, stack });
+    console.error("[creem] checkout unhandled error", {
+      message,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    const errLike = error as { status?: unknown; code?: unknown };
+    const status = error instanceof AppError
+      ? error.status
+      : typeof errLike.status === "number" ? errLike.status : 500;
+    const code = error instanceof AppError
+      ? error.code
+      : typeof errLike.code === "string" ? errLike.code : "CHECKOUT_FAILED";
     return jsonResponse({
       ok: false,
       code,
-      message,
-      stack,
+      message: status >= 500 ? "Checkout failed. Please try again later." : message,
     }, status);
   }
+}
+
+// ---- Checkout configuration status ----
+
+export async function handleCheckoutStatus(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "GET") {
+    return jsonResponse({ ok: false, code: "method_not_allowed", message: "Use GET for this endpoint." }, 405);
+  }
+  const configured = Boolean(env.CREEM_API_KEY && env.CREEM_PLUS_MONTHLY_PRODUCT_ID);
+  return jsonResponse({ configured });
 }
 
 // ---- Creem Webhook ----

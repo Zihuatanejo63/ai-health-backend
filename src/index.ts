@@ -24,7 +24,7 @@ import {
   handleExportData,
   handleDeleteData,
 } from "./routes/data";
-import { handleCreateCheckout, handleCreemWebhook } from "./routes/payments";
+import { handleCreateCheckout, handleCheckoutStatus, handleCreemWebhook } from "./routes/payments";
 import { handleAdminDashboard, handleAdminUserLookup, handleAdminEntitlements, handleAdminLedger, handleAdminMarkPayout } from "./routes/admin";
 
 interface Env {
@@ -159,6 +159,9 @@ export default {
       // Payment routes
       if (url.pathname === "/api/create-checkout-session") {
         return withCors(await handleCreateCheckout(request, env), request, env);
+      }
+      if (url.pathname === "/api/checkout-status") {
+        return withCors(await handleCheckoutStatus(request, env), request, env);
       }
       if (url.pathname === "/api/webhooks/creem") {
         // Webhook responses don't need CORS headers

@@ -132,7 +132,7 @@ export async function handleAdminUserLookup(request: Request, env: Env): Promise
     ).bind(userId).first<{ count: number }>(),
   ]);
 
-  await writeAuditLog(db, actorId, "admin.user.lookup", "user", user.id, { lookupBy: identifier.includes("@") ? "email" : "userId" });
+  await writeAuditLog(db, actorId, "admin.user.lookup", "user", String(user.id), { lookupBy: identifier.includes("@") ? "email" : "userId" });
 
   return jsonResponse({
     user: {
