@@ -25,6 +25,7 @@ import {
   handleDeleteData,
 } from "./routes/data";
 import { handleCreateCheckout, handleCheckoutStatus, handleCreemWebhook } from "./routes/payments";
+import { handleTrackEvent, handleSubscribe } from "./routes/events";
 import { handleAdminDashboard, handleAdminUserLookup, handleAdminEntitlements, handleAdminLedger, handleAdminMarkPayout } from "./routes/admin";
 
 interface Env {
@@ -162,6 +163,14 @@ export default {
       }
       if (url.pathname === "/api/checkout-status") {
         return withCors(await handleCheckoutStatus(request, env), request, env);
+      }
+
+      // Funnel events + email capture
+      if (url.pathname === "/api/events") {
+        return withCors(await handleTrackEvent(request, env), request, env);
+      }
+      if (url.pathname === "/api/subscribe") {
+        return withCors(await handleSubscribe(request, env), request, env);
       }
       if (url.pathname === "/api/webhooks/creem") {
         // Webhook responses don't need CORS headers
